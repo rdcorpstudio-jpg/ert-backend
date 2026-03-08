@@ -27,7 +27,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('name')
     )
-    op.drop_table('product_freebies')
+    #op.drop_table('product_freebies')
     op.add_column('order_item_freebies', sa.Column('freebie_id', sa.Integer(), nullable=True))
     op.create_foreign_key(None, 'order_item_freebies', 'freebies', ['freebie_id'], ['id'])
     op.drop_column('order_item_freebies', 'freebie_name')
@@ -40,15 +40,15 @@ def downgrade() -> None:
     op.add_column('order_item_freebies', sa.Column('freebie_name', mysql.VARCHAR(length=100), nullable=True))
     op.drop_constraint(None, 'order_item_freebies', type_='foreignkey')
     op.drop_column('order_item_freebies', 'freebie_id')
-    op.create_table('product_freebies',
-    sa.Column('id', mysql.INTEGER(), autoincrement=True, nullable=False),
-    sa.Column('product_id', mysql.INTEGER(), autoincrement=False, nullable=True),
-    sa.Column('name', mysql.VARCHAR(length=100), nullable=True),
-    sa.ForeignKeyConstraint(['product_id'], ['products.id'], name=op.f('product_freebies_ibfk_1')),
-    sa.PrimaryKeyConstraint('id'),
-    mysql_collate='utf8mb4_0900_ai_ci',
-    mysql_default_charset='utf8mb4',
-    mysql_engine='InnoDB'
-    )
+   # op.create_table('product_freebies',
+   # sa.Column('id', mysql.INTEGER(), autoincrement=True, nullable=False),
+   # sa.Column('product_id', mysql.INTEGER(), autoincrement=False, nullable=True),
+   # sa.Column('name', mysql.VARCHAR(length=100), nullable=True),
+   # sa.ForeignKeyConstraint(['product_id'], ['products.id'], name=op.f('product_freebies_ibfk_1')),
+   # sa.PrimaryKeyConstraint('id'),
+   # mysql_collate='utf8mb4_0900_ai_ci',
+   # mysql_default_charset='utf8mb4',
+   # mysql_engine='InnoDB'
+   # )
     op.drop_table('freebies')
     # ### end Alembic commands ###
