@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pymysql
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+openpyxl
+google-auth
+google-api-python-client
+httplib2
+alembic
