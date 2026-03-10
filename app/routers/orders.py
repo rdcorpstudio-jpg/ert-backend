@@ -1038,6 +1038,33 @@ def get_order_detail(
     }
 
 
+@router.delete("/{order_id}")
+def delete_order(
+    order_id: int,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Manager only. Permanently delete an order and all related data (items, freebies, payment, files, logs, alerts)."""
+    require_role(user, ["manager"])
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # Delete in dependency order: item freebies -> order items -> order freebies -> files, logs, alerts -> payment -> order
+    order_item_ids = [r[0] for r in db.query(OrderItem.id).filter(OrderItem.order_id == order_id).all()]
+    if order_item_ids:
+        db.query(OrderItemFreebie).filter(OrderItemFreebie.order_item_id.in_(order_item_ids)).delete(synchronize_session=False)
+    db.query(OrderItem).filter(OrderItem.order_id == order_id).delete(synchronize_session=False)
+    db.query(OrderFreebie).filter(OrderFreebie.order_id == order_id).delete(synchronize_session=False)
+    db.query(OrderFile).filter(OrderFile.order_id == order_id).delete(synchronize_session=False)
+    db.query(OrderLog).filter(OrderLog.order_id == order_id).delete(synchronize_session=False)
+    db.query(OrderAlert).filter(OrderAlert.order_id == order_id).delete(synchronize_session=False)
+    db.query(OrderPayment).filter(OrderPayment.order_id == order_id).delete(synchronize_session=False)
+    db.delete(order)
+    db.commit()
+    return {"message": "Order and all related data deleted", "order_id": order_id}
+
+
 @router.post("/{order_id}/items")
 def add_order_item(
     order_id: int,
