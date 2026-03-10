@@ -1038,18 +1038,23 @@ def get_order_detail(
     }
 
 
-@router.delete("/{order_id}")
+@router.delete("/{order_id_or_code}")
 def delete_order(
-    order_id: int,
+    order_id_or_code: str,
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Manager only. Permanently delete an order and all related data (items, freebies, payment, files, logs, alerts)."""
+    """Manager only. Permanently delete an order and all related data. Accepts numeric order ID or order code (e.g. SG-26-03-08-00001)."""
     require_role(user, ["manager"])
-    order = db.query(Order).filter(Order.id == order_id).first()
+    order = None
+    if order_id_or_code.isdigit():
+        order = db.query(Order).filter(Order.id == int(order_id_or_code)).first()
+    if not order:
+        order = db.query(Order).filter(Order.order_code == order_id_or_code).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    order_id = order.id
     # Delete in dependency order: item freebies -> order items -> order freebies -> files, logs, alerts -> payment -> order
     order_item_ids = [r[0] for r in db.query(OrderItem.id).filter(OrderItem.order_id == order_id).all()]
     if order_item_ids:
@@ -1062,7 +1067,7 @@ def delete_order(
     db.query(OrderPayment).filter(OrderPayment.order_id == order_id).delete(synchronize_session=False)
     db.delete(order)
     db.commit()
-    return {"message": "Order and all related data deleted", "order_id": order_id}
+    return {"message": "Order and all related data deleted", "order_id": order_id, "order_code": order_id_or_code}
 
 
 @router.post("/{order_id}/items")
