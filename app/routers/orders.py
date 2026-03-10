@@ -958,10 +958,15 @@ def get_order_detail(
         })
 
     # Explicit order dict so shipping_note and all fields are always included
+    sale_name = None
+    if order.sale_id:
+        u = db.query(User).filter(User.id == order.sale_id).first()
+        sale_name = (u.name or "").strip() or None if u else None
     order_data = {
         "id": order.id,
         "order_code": order.order_code,
         "sale_id": order.sale_id,
+        "sale_name": sale_name,
         "customer_name": order.customer_name,
         "customer_phone": order.customer_phone,
         "shipping_address_text": order.shipping_address_text,
