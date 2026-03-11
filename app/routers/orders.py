@@ -842,6 +842,84 @@ def get_revenue_by_date(
     return {"series": out}
 
 
+@router.get("/revenue-by-product")
+def get_revenue_by_product(
+    created_from: str | None = Query(None, description="YYYY-MM-DD"),
+    created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    group_by: str = Query("category", description="category | product_name"),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Revenue by product category or by product name (order item level, filtered by order created_at)."""
+    query = db.query(Order)
+    if created_from:
+        try:
+            dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) >= dt_from)
+        except ValueError:
+            pass
+    if created_to:
+        try:
+            dt_to = datetime.strptime(created_to, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) <= dt_to)
+        except ValueError:
+            pass
+    order_ids = [o.id for o in query.all()]
+    if not order_ids:
+        return {"items": []}
+    # Item-level revenue: sum(unit_price - discount) per order item
+    if (group_by or "category").strip().lower() == "product_name":
+        # Group by product name (snapshot on order item)
+        rows = (
+            db.query(OrderItem.product_name, (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"))
+            .filter(OrderItem.order_id.in_(order_ids))
+            .group_by(OrderItem.product_name)
+            .all()
+        )
+        items = [{"name": (r.product_name or "—") or "—", "revenue": round(float(r.revenue or 0), 2)} for r in rows]
+    else:
+        # Group by product category (join Product)
+        rows = (
+            db.query(Product.category, (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"))
+            .join(OrderItem, OrderItem.product_id == Product.id)
+            .filter(OrderItem.order_id.in_(order_ids))
+            .group_by(Product.category)
+            .all()
+        )
+        items = [{"name": (r.category or "—") or "—", "revenue": round(float(r.revenue or 0), 2)} for r in rows]
+    return {"items": items}
+
+
+@router.get("/revenue-by-sale")
+def get_revenue_by_sale(
+    created_from: str | None = Query(None, description="YYYY-MM-DD"),
+    created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Revenue by sale name (order creator). For dashboard pie chart."""
+    query = (
+        db.query(User.name, (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"))
+        .join(Order, Order.sale_id == User.id)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+    )
+    if created_from:
+        try:
+            dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) >= dt_from)
+        except ValueError:
+            pass
+    if created_to:
+        try:
+            dt_to = datetime.strptime(created_to, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) <= dt_to)
+        except ValueError:
+            pass
+    rows = query.group_by(Order.sale_id, User.name).all()
+    items = [{"name": (r.name or "—") or "—", "revenue": round(float(r.revenue or 0), 2)} for r in rows]
+    return {"items": items}
+
+
 @router.get("")
 def list_orders(
     order_status: str | None = None,
