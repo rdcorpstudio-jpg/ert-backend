@@ -15,10 +15,11 @@ import app.models.order_freebie
 import app.models.order_alert
 import app.models.order_log
 import app.models.order_file
+import app.models.line_notification_config
 
 Base.metadata.create_all(bind=engine)
 
-from app.routers import auth, orders, products
+from app.routers import auth, orders, products, line_notification
 
 
 
@@ -40,4 +41,5 @@ app.add_middleware(
 # รวม router
 app.include_router(auth.router, tags=["Auth"])
 app.include_router(orders.router, tags=["Orders"])
-app.include_router(products.router,  tags=["Products"])
+app.include_router(products.router, tags=["Products"])
+app.include_router(line_notification.router, tags=["LineNotification"])

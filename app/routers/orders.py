@@ -36,6 +36,7 @@ import io
 from openpyxl import Workbook
 from app.models.order_freebie import OrderFreebie
 from app.models.user import User
+from app.services.line_messaging import send_order_created_notification
 
 router = APIRouter(prefix="/orders")
 
@@ -98,6 +99,12 @@ def create_order(
         db.add(payment)
 
         db.commit()
+
+        # Fire-and-forget LINE notification; ignore errors.
+        try:
+            send_order_created_notification(db, order.id)
+        except Exception:
+            pass
 
         return {
             "message": "Order created",
@@ -723,22 +730,45 @@ def get_revenue_summary(
     packing_shipping_revenue = 0.0
     success_revenue = 0.0
     fail_return_revenue = 0.0
+
+    pending_product_count = 0
+    checked_product_count = 0
+    packing_shipping_product_count = 0
+    success_product_count = 0
+    fail_return_product_count = 0
+
     for order in orders:
         net = _order_net_total(db, order.id)
+        # Count how many main products are on this order (each order item = 1 unit)
+        item_count = db.query(OrderItem).filter(OrderItem.order_id == order.id).count()
         s = (order.order_status or "").strip()
         if s == "Pending":
             pending_revenue += net
+            pending_product_count += item_count
         elif s == "Checked":
             checked_revenue += net
+            checked_product_count += item_count
         elif s in ("Packing", "Shipped"):
             packing_shipping_revenue += net
+            packing_shipping_product_count += item_count
         elif s == "Success":
             success_revenue += net
+            success_product_count += item_count
         elif s in ("Fail", "Return Received"):
             fail_return_revenue += net
+            fail_return_product_count += item_count
+
     total_revenue = (
         pending_revenue + checked_revenue + packing_shipping_revenue + success_revenue + fail_return_revenue
     )
+    total_product_count = (
+        pending_product_count
+        + checked_product_count
+        + packing_shipping_product_count
+        + success_product_count
+        + fail_return_product_count
+    )
+
     return {
         "pending_revenue": round(pending_revenue, 2),
         "checked_revenue": round(checked_revenue, 2),
@@ -746,6 +776,12 @@ def get_revenue_summary(
         "success_revenue": round(success_revenue, 2),
         "fail_return_revenue": round(fail_return_revenue, 2),
         "total_revenue": round(total_revenue, 2),
+        "pending_product_count": pending_product_count,
+        "checked_product_count": checked_product_count,
+        "packing_shipping_product_count": packing_shipping_product_count,
+        "success_product_count": success_product_count,
+        "fail_return_product_count": fail_return_product_count,
+        "total_product_count": total_product_count,
     }
 
 
