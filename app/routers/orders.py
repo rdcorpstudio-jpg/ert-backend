@@ -109,20 +109,20 @@ def create_order(
                 "order_id": order.id
             }
 
-        except IntegrityError as e:
-            db.rollback()
-            err_msg = str(e).lower()
-            if "order_code" in err_msg or "1062" in err_msg:
-                if attempt < max_attempts - 1:
-                    continue
-            traceback.print_exc()
-            raise HTTPException(status_code=500, detail=str(e))
         except Exception as e:
             db.rollback()
+            err_msg = str(e).lower()
+            is_dup_code = (
+                isinstance(e, IntegrityError)
+                or "1062" in err_msg
+                or "duplicate entry" in err_msg
+                or "order_code" in err_msg
+            )
+            if is_dup_code and attempt < max_attempts - 1:
+                continue
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=str(e))
 
-    db.rollback()
     raise HTTPException(status_code=500, detail="Could not generate unique order code. Please try again.")
 
 
