@@ -41,8 +41,28 @@ def _build_order_created_message(db: Session, order: Order) -> Optional[str]:
     }
     payment_method_text = payment_method_map.get(payment_method_raw, payment_method_raw or "-")
 
-    total_discount = sum(float(i.discount or 0) for i in items)
-    discount_text = f"{total_discount:,.2f} บาท"
+    # Discount: show same as sale submit — percentage when it matches a clean % of price,
+    # otherwise show flat "X บาท" (with special handling for 1000).
+    def _discount_label(unit_price: float, discount: float) -> str:
+        if discount <= 0:
+            return ""
+        # Flat 1000 baht option from dropdown
+        if abs(discount - 1000) < 0.01:
+            return "1,000 บาท"
+        if unit_price and unit_price > 0:
+            pct = (discount / unit_price) * 100.0
+            nearest = round(pct)
+            # If percentage is very close to a whole number (e.g. 5, 8, 10, 25, 26, 28, ...)
+            if 1 <= nearest <= 99 and abs(pct - nearest) < 0.25:
+                return f"{nearest}%"
+        return f"{discount:,.2f} บาท"
+
+    discount_parts = [
+        _discount_label(float(i.unit_price or 0), float(i.discount or 0))
+        for i in items
+    ]
+    discount_parts = [s for s in discount_parts if s]
+    discount_text = ", ".join(discount_parts) if discount_parts else "-"
 
     # Freebie names: order-level first, fallback to item-level
     freebie_names = [
