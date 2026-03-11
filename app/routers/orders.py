@@ -11,6 +11,7 @@ from app.models.order_file import OrderFile
 from app.core.file_rules import FILE_RULES
 from fastapi import HTTPException
 import traceback
+from sqlalchemy.exc import IntegrityError
 from app.utils.order_log import log_order_change
 from app.models.order_log import OrderLog
 from app.core.order_rules import (
@@ -65,56 +66,64 @@ def create_order(
 ):
     require_role(user, ["sale", "manager"])
 
-    try:
-        # 1️⃣ สร้าง Order
-        order_code = generate_order_code(db)
-        # DB column is String(255); avoid 500 if frontend sends longer
-        shipping_address_safe = ((data.shipping_address or "").strip() or "")[:255]
+    shipping_address_safe = ((data.shipping_address or "").strip() or "")[:255]
+    max_attempts = 3
 
-        order = Order(
-            order_code=order_code,
-            sale_id=user["user_id"],
-            customer_name=data.customer_name,
-            customer_phone=data.customer_phone,
-            shipping_address_text=shipping_address_safe,
-            shipping_date=data.shipping_date,
-            invoice_required=bool(data.invoice_text),
-            invoice_text=data.invoice_text,
-            note=data.note,
-            shipping_note=data.shipping_note,
-            pageName=data.pageName,
-            installment_type=data.installment_type,
-            installment_months=data.installment_months
-        )
+    for attempt in range(max_attempts):
+        try:
+            # 1️⃣ สร้าง Order
+            order_code = generate_order_code(db)
+            order = Order(
+                order_code=order_code,
+                sale_id=user["user_id"],
+                customer_name=data.customer_name,
+                customer_phone=data.customer_phone,
+                shipping_address_text=shipping_address_safe,
+                shipping_date=data.shipping_date,
+                invoice_required=bool(data.invoice_text),
+                invoice_text=data.invoice_text,
+                note=data.note,
+                shipping_note=data.shipping_note,
+                pageName=data.pageName,
+                installment_type=data.installment_type,
+                installment_months=data.installment_months
+            )
 
-        db.add(order)
-        db.flush()
+            db.add(order)
+            db.flush()
 
-        # 2️⃣ สร้าง Payment
-        payment = OrderPayment(
-            order_id=order.id,
-            payment_status="Unchecked",
-            payment_method=data.payment_method,
-            installment_type=data.installment_type,
-            installment_months=data.installment_months
-        )
+            # 2️⃣ สร้าง Payment
+            payment = OrderPayment(
+                order_id=order.id,
+                payment_status="Unchecked",
+                payment_method=data.payment_method,
+                installment_type=data.installment_type,
+                installment_months=data.installment_months
+            )
 
-        db.add(payment)
+            db.add(payment)
+            db.commit()
 
-        db.commit()
+            return {
+                "message": "Order created",
+                "order_id": order.id
+            }
 
-        return {
-            "message": "Order created",
-            "order_id": order.id
-        }
+        except IntegrityError as e:
+            db.rollback()
+            err_msg = str(e).lower()
+            if "order_code" in err_msg or "1062" in err_msg:
+                if attempt < max_attempts - 1:
+                    continue
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            db.rollback()
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=str(e))
 
-    except Exception as e:
-        db.rollback()
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+    db.rollback()
+    raise HTTPException(status_code=500, detail="Could not generate unique order code. Please try again.")
 
 
 @router.post("/{order_id}/notify-created")
