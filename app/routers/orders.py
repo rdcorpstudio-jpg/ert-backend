@@ -68,12 +68,14 @@ def create_order(
         # 1️⃣ สร้าง Order
         order_code = generate_order_code(db)
 
+        # DB column is String(255); avoid 500 if frontend sends longer text
+        shipping_address_safe = ((data.shipping_address or "").strip() or "")[:255]
         order = Order(
             order_code=order_code,
             sale_id=user["user_id"],
             customer_name=data.customer_name,
             customer_phone=data.customer_phone,
-            shipping_address_text=data.shipping_address,
+            shipping_address_text=shipping_address_safe,
             shipping_date=data.shipping_date,
             invoice_required=bool(data.invoice_text),
             invoice_text=data.invoice_text,
