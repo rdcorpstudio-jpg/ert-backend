@@ -23,7 +23,7 @@ from app.core.status_sync import sync_order_status_with_payment
 from app.core.order_status_rules import can_change_order_status
 from app.utils.order_alert import create_order_alert
 from app.models.order_alert import OrderAlert
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from app.models.order_item import OrderItem
 from app.models.product import Product
 from app.models.order_item_freebie import OrderItemFreebie
@@ -696,6 +696,152 @@ def get_my_alert_count(
     return {"count": count}
 
 
+@router.get("/revenue-summary")
+def get_revenue_summary(
+    created_from: str | None = Query(None, description="YYYY-MM-DD"),
+    created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Revenue by status bucket (by order created_at). Default: all time."""
+    query = db.query(Order)
+    if created_from:
+        try:
+            dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) >= dt_from)
+        except ValueError:
+            pass
+    if created_to:
+        try:
+            dt_to = datetime.strptime(created_to, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) <= dt_to)
+        except ValueError:
+            pass
+    orders = query.all()
+    pending_revenue = 0.0
+    checked_revenue = 0.0
+    packing_shipping_revenue = 0.0
+    success_revenue = 0.0
+    fail_return_revenue = 0.0
+    for order in orders:
+        net = _order_net_total(db, order.id)
+        s = (order.order_status or "").strip()
+        if s == "Pending":
+            pending_revenue += net
+        elif s == "Checked":
+            checked_revenue += net
+        elif s in ("Packing", "Shipped"):
+            packing_shipping_revenue += net
+        elif s == "Success":
+            success_revenue += net
+        elif s in ("Fail", "Return Received"):
+            fail_return_revenue += net
+    total_revenue = (
+        pending_revenue + checked_revenue + packing_shipping_revenue + success_revenue + fail_return_revenue
+    )
+    return {
+        "pending_revenue": round(pending_revenue, 2),
+        "checked_revenue": round(checked_revenue, 2),
+        "packing_shipping_revenue": round(packing_shipping_revenue, 2),
+        "success_revenue": round(success_revenue, 2),
+        "fail_return_revenue": round(fail_return_revenue, 2),
+        "total_revenue": round(total_revenue, 2),
+    }
+
+
+@router.get("/revenue-by-date")
+def get_revenue_by_date(
+    created_from: str | None = Query(None, description="YYYY-MM-DD"),
+    created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Revenue by day (by order created_at date). For dashboard chart. Returns list of { date, ...revenues }."""
+    query = db.query(Order)
+    if created_from:
+        try:
+            dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) >= dt_from)
+        except ValueError:
+            pass
+    if created_to:
+        try:
+            dt_to = datetime.strptime(created_to, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) <= dt_to)
+        except ValueError:
+            pass
+    orders = query.order_by(Order.created_at.asc()).all()
+    # Group by date
+    from collections import defaultdict
+    daily = defaultdict(lambda: {
+        "pending_revenue": 0.0,
+        "checked_revenue": 0.0,
+        "packing_shipping_revenue": 0.0,
+        "success_revenue": 0.0,
+        "fail_return_revenue": 0.0,
+    })
+    for order in orders:
+        dt = order.created_at.date() if hasattr(order.created_at, "date") else order.created_at
+        if hasattr(dt, "isoformat"):
+            key = dt.isoformat()
+        else:
+            key = str(dt)[:10]
+        net = _order_net_total(db, order.id)
+        s = (order.order_status or "").strip()
+        if s == "Pending":
+            daily[key]["pending_revenue"] += net
+        elif s == "Checked":
+            daily[key]["checked_revenue"] += net
+        elif s in ("Packing", "Shipped"):
+            daily[key]["packing_shipping_revenue"] += net
+        elif s == "Success":
+            daily[key]["success_revenue"] += net
+        elif s in ("Fail", "Return Received"):
+            daily[key]["fail_return_revenue"] += net
+    # Determine full date range: use filter params if set, else min/max from data
+    if created_from and created_to:
+        try:
+            start = datetime.strptime(created_from, "%Y-%m-%d").date()
+            end = datetime.strptime(created_to, "%Y-%m-%d").date()
+        except ValueError:
+            start = min(daily.keys()) if daily else date.today()
+            end = max(daily.keys()) if daily else date.today()
+    elif daily:
+        start = min(datetime.strptime(d, "%Y-%m-%d").date() for d in daily.keys())
+        end = max(datetime.strptime(d, "%Y-%m-%d").date() for d in daily.keys())
+    else:
+        start = end = date.today()
+    if start > end:
+        start, end = end, start
+    # Build one entry per day in range
+    out = []
+    current = start
+    while current <= end:
+        date_str = current.isoformat()
+        row = daily.get(date_str, {
+            "pending_revenue": 0.0,
+            "checked_revenue": 0.0,
+            "packing_shipping_revenue": 0.0,
+            "success_revenue": 0.0,
+            "fail_return_revenue": 0.0,
+        })
+        total = (
+            row["pending_revenue"] + row["checked_revenue"] + row["packing_shipping_revenue"]
+            + row["success_revenue"] + row["fail_return_revenue"]
+        )
+        out.append({
+            "date": date_str,
+            "pending_revenue": round(row["pending_revenue"], 2),
+            "checked_revenue": round(row["checked_revenue"], 2),
+            "packing_shipping_revenue": round(row["packing_shipping_revenue"], 2),
+            "success_revenue": round(row["success_revenue"], 2),
+            "fail_return_revenue": round(row["fail_return_revenue"], 2),
+            "total_revenue": round(total, 2),
+        })
+        current += timedelta(days=1)
+    return {"series": out}
+
+
 @router.get("")
 def list_orders(
     order_status: str | None = None,
@@ -789,14 +935,16 @@ def list_orders(
             (Order.tracking_number.is_(None)) | (func.coalesce(func.trim(Order.tracking_number), "") == "")
         )
 
-    # 6️⃣ Search (order ID, customer name/phone, tracking number)
+    # 6️⃣ Search (order ID, customer name/phone, tracking number, sale name)
     if keyword:
         kw = f"%{keyword}%"
+        query = query.outerjoin(User, Order.sale_id == User.id)
         query = query.filter(
             Order.order_code.ilike(kw)
             | Order.customer_name.ilike(kw)
             | Order.customer_phone.ilike(kw)
             | Order.tracking_number.ilike(kw)
+            | User.name.ilike(kw)
         )
 
     # 7️⃣ Sorting
