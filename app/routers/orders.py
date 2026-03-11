@@ -100,12 +100,6 @@ def create_order(
 
         db.commit()
 
-        # Fire-and-forget LINE notification; ignore errors.
-        try:
-            send_order_created_notification(db, order.id)
-        except Exception:
-            pass
-
         return {
             "message": "Order created",
             "order_id": order.id
@@ -119,6 +113,26 @@ def create_order(
         )
 
 
+@router.post("/{order_id}/notify-created")
+def notify_order_created(
+    order_id: int,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Trigger LINE notification for a newly created order.
+    Call this only after products, freebies, payment and files are saved.
+    """
+    require_role(user, ["sale", "manager"])
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    # Fire-and-forget LINE notification; ignore errors.
+    try:
+        send_order_created_notification(db, order.id)
+    except Exception:
+        pass
+    return {"message": "notified"}
 
 
 @router.post("/{order_id}/upload-file")
