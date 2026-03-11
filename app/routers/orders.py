@@ -10,6 +10,7 @@ from app.services.google_drive import upload_file_to_drive
 from app.models.order_file import OrderFile
 from app.core.file_rules import FILE_RULES
 from fastapi import HTTPException
+import traceback
 from app.utils.order_log import log_order_change
 from app.models.order_log import OrderLog
 from app.core.order_rules import (
@@ -67,13 +68,15 @@ def create_order(
     try:
         # 1️⃣ สร้าง Order
         order_code = generate_order_code(db)
+        # DB column is String(255); avoid 500 if frontend sends longer
+        shipping_address_safe = ((data.shipping_address or "").strip() or "")[:255]
 
         order = Order(
             order_code=order_code,
             sale_id=user["user_id"],
             customer_name=data.customer_name,
             customer_phone=data.customer_phone,
-            shipping_address_text=data.shipping_address,
+            shipping_address_text=shipping_address_safe,
             shipping_date=data.shipping_date,
             invoice_required=bool(data.invoice_text),
             invoice_text=data.invoice_text,
@@ -107,6 +110,7 @@ def create_order(
 
     except Exception as e:
         db.rollback()
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=str(e)
