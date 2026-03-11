@@ -111,6 +111,7 @@ def create_order(
 
         except Exception as e:
             db.rollback()
+            db.expire_all()
             err_msg = str(e).lower()
             is_dup_code = (
                 isinstance(e, IntegrityError)
