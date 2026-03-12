@@ -1886,6 +1886,108 @@ def export_today_pack_orders(
     )
 
 
+@router.get("/export")
+def export_orders_excel(
+    created_from: str | None = Query(None, description="YYYY-MM-DD"),
+    created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    sale_id: int | None = Query(None, description="Filter by sale_id (optional)"),
+    payment_method: str | None = Query(None, description="cod | transfer | card_2c2p | card_pay"),
+    order_status: str | None = Query(None, description="Order status filter (optional)"),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Export orders to an Excel file for accountant / manager.
+
+    Filters:
+    - created_from / created_to: order created_at date range
+    - sale_id: specific sale (optional)
+    - payment_method: payment method code (optional)
+    """
+    require_role(user, ["account", "manager"])
+
+    query = (
+        db.query(Order, OrderPayment, User)
+        .join(OrderPayment, OrderPayment.order_id == Order.id)
+        .outerjoin(User, User.id == Order.sale_id)
+    )
+
+    if created_from:
+        try:
+            dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) >= dt_from)
+        except ValueError:
+            pass
+
+    if created_to:
+        try:
+            dt_to = datetime.strptime(created_to, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) <= dt_to)
+        except ValueError:
+            pass
+
+    if sale_id is not None:
+        query = query.filter(Order.sale_id == sale_id)
+
+    if payment_method:
+        query = query.filter(OrderPayment.payment_method == payment_method)
+
+    if order_status:
+        query = query.filter(Order.order_status == order_status)
+
+    rows = query.order_by(Order.created_at.asc()).all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Orders"
+
+    ws.append(
+        [
+            "Order Code",
+            "Created At",
+            "Sale Name",
+            "Customer Name",
+            "Payment Method",
+            "Payment Status",
+            "Order Status",
+            "Shipping Date",
+        ]
+    )
+
+    for o, pay, sale_user in rows:
+        ws.append(
+            [
+                o.order_code,
+                o.created_at.isoformat() if getattr(o, "created_at", None) else "",
+                (sale_user.name if sale_user is not None else "") or "",
+                o.customer_name or "",
+                pay.payment_method or "",
+                pay.payment_status or "",
+                o.order_status or "",
+                str(o.shipping_date or "") if o.shipping_date else "",
+            ]
+        )
+
+    stream = io.BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    filename_parts = ["orders"]
+    if created_from:
+        filename_parts.append(created_from)
+    if created_to:
+        filename_parts.append(created_to)
+    filename = "_".join(filename_parts) + ".xlsx"
+
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}"
+        },
+    )
+
+
 @router.post("/{order_id}/freebies")
 def add_order_freebie(
     order_id: int,
