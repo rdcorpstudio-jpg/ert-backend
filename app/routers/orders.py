@@ -977,6 +977,7 @@ def get_revenue_by_sale(
         db.query(
             User.name,
             (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"),
+            func.count(func.distinct(Order.id)).label("order_count"),
             Order.sale_id.label("sale_id"),
         )
         .join(Order, Order.sale_id == User.id)
@@ -1011,6 +1012,7 @@ def get_revenue_by_sale(
             "sale_id": r.sale_id,
             "name": (r.name or "—") or "—",
             "revenue": round(float(r.revenue or 0), 2),
+            "order_count": int(r.order_count or 0),
         }
         for r in rows
     ]
@@ -1028,7 +1030,7 @@ def get_revenue_by_sale_breakdown(
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Breakdown revenue for a single sale by product category and pageName."""
+    """Breakdown revenue for a single sale by product category, pageName, and status."""
 
     require_role(user, ["sale", "manager", "account"])
 
@@ -1045,7 +1047,7 @@ def get_revenue_by_sale_breakdown(
 
     if effective_sale_id is None:
         # Nothing to show if manager/account did not specify sale_id
-        return {"categories": [], "pages": []}
+        return {"categories": [], "pages": [], "statuses": []}
 
     # Build common filters (by sale + created_at range)
     filters = [Order.sale_id == effective_sale_id]
@@ -1101,7 +1103,28 @@ def get_revenue_by_sale_breakdown(
         for r in page_rows
     ]
 
-    return {"categories": categories, "pages": pages}
+    # Breakdown by order status
+    status_rows = (
+        db.query(
+            Order.order_status.label("status"),
+            (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"),
+            func.count(func.distinct(Order.id)).label("order_count"),
+        )
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .filter(*filters)
+        .group_by(Order.order_status)
+        .all()
+    )
+    statuses = [
+        {
+            "status": (r.status or "—") or "—",
+            "revenue": round(float(r.revenue or 0), 2),
+            "order_count": int(r.order_count or 0),
+        }
+        for r in status_rows
+    ]
+
+    return {"categories": categories, "pages": pages, "statuses": statuses}
 
 
 @router.get("")
