@@ -958,15 +958,41 @@ def get_revenue_by_product(
 def get_revenue_by_sale(
     created_from: str | None = Query(None, description="YYYY-MM-DD"),
     created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    sale_id: int | None = Query(
+        None,
+        description="Optional: filter by specific sale id (manager/account only)",
+    ),
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Revenue by sale name (order creator). For dashboard pie chart."""
+    """Revenue by sale name (order creator).
+
+    - Sale role: always restricted to current user (cannot see others).
+    - Manager / Accountant: can see all, or filter to a specific sale_id.
+    """
+    # Allow only relevant roles to use this endpoint
+    require_role(user, ["sale", "manager", "account"])
+
     query = (
-        db.query(User.name, (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"))
+        db.query(
+            User.name,
+            (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"),
+            Order.sale_id.label("sale_id"),
+        )
         .join(Order, Order.sale_id == User.id)
         .join(OrderItem, OrderItem.order_id == Order.id)
     )
+
+    role = user.get("role")
+    current_sale_id = user.get("user_id")
+
+    # Sale can only see their own revenue
+    if role == "sale" and current_sale_id is not None:
+        query = query.filter(Order.sale_id == current_sale_id)
+    # Manager / accountant can optionally filter by a specific sale_id
+    elif role in ("manager", "account") and sale_id is not None:
+        query = query.filter(Order.sale_id == sale_id)
+
     if created_from:
         try:
             dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
@@ -980,8 +1006,102 @@ def get_revenue_by_sale(
         except ValueError:
             pass
     rows = query.group_by(Order.sale_id, User.name).all()
-    items = [{"name": (r.name or "—") or "—", "revenue": round(float(r.revenue or 0), 2)} for r in rows]
+    items = [
+        {
+            "sale_id": r.sale_id,
+            "name": (r.name or "—") or "—",
+            "revenue": round(float(r.revenue or 0), 2),
+        }
+        for r in rows
+    ]
     return {"items": items}
+
+
+@router.get("/revenue-by-sale-breakdown")
+def get_revenue_by_sale_breakdown(
+    created_from: str | None = Query(None, description="YYYY-MM-DD"),
+    created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    sale_id: int | None = Query(
+        None,
+        description="Sale id to focus on (ignored for sale role, required for manager/account).",
+    ),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Breakdown revenue for a single sale by product category and pageName."""
+
+    require_role(user, ["sale", "manager", "account"])
+
+    role = user.get("role")
+    current_sale_id = user.get("user_id")
+
+    # Determine which sale we are allowed to see
+    effective_sale_id: int | None = None
+    if role == "sale" and current_sale_id is not None:
+        # Sale can only see their own breakdown; ignore query param
+        effective_sale_id = int(current_sale_id)
+    elif role in ("manager", "account") and sale_id is not None:
+        effective_sale_id = int(sale_id)
+
+    if effective_sale_id is None:
+        # Nothing to show if manager/account did not specify sale_id
+        return {"categories": [], "pages": []}
+
+    # Build common filters (by sale + created_at range)
+    filters = [Order.sale_id == effective_sale_id]
+    if created_from:
+        try:
+            dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
+            filters.append(func.date(Order.created_at) >= dt_from)
+        except ValueError:
+            pass
+    if created_to:
+        try:
+            dt_to = datetime.strptime(created_to, "%Y-%m-%d").date()
+            filters.append(func.date(Order.created_at) <= dt_to)
+        except ValueError:
+            pass
+
+    # Breakdown by product category
+    cat_rows = (
+        db.query(
+            Product.category.label("category"),
+            (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"),
+        )
+        .join(OrderItem, OrderItem.product_id == Product.id)
+        .join(Order, Order.id == OrderItem.order_id)
+        .filter(*filters)
+        .group_by(Product.category)
+        .all()
+    )
+    categories = [
+        {
+            "name": (r.category or "—") or "—",
+            "revenue": round(float(r.revenue or 0), 2),
+        }
+        for r in cat_rows
+    ]
+
+    # Breakdown by pageName
+    page_rows = (
+        db.query(
+            Order.pageName.label("page_name"),
+            (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"),
+        )
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .filter(*filters)
+        .group_by(Order.pageName)
+        .all()
+    )
+    pages = [
+        {
+            "name": (r.page_name or "—") or "—",
+            "revenue": round(float(r.revenue or 0), 2),
+        }
+        for r in page_rows
+    ]
+
+    return {"categories": categories, "pages": pages}
 
 
 @router.get("")
