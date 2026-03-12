@@ -1886,7 +1886,7 @@ def export_today_pack_orders(
     )
 
 
-@router.get("/export")
+@router.get("/export-orders")
 def export_orders_excel(
     created_from: str | None = Query(None, description="YYYY-MM-DD"),
     created_to: str | None = Query(None, description="YYYY-MM-DD"),
