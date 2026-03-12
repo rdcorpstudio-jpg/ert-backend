@@ -911,10 +911,28 @@ def get_revenue_by_product(
     created_from: str | None = Query(None, description="YYYY-MM-DD"),
     created_to: str | None = Query(None, description="YYYY-MM-DD"),
     group_by: str = Query("category", description="category | product_name"),
+    sale_id: int | None = Query(
+        None,
+        description="Optional sale id to filter by (sale role is always limited to own id).",
+    ),
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Revenue by product category or by product name (order item level, filtered by order created_at)."""
+    """Revenue by product category or by product name (order item level, filtered by order created_at and optional sale)."""
+    # Allow only relevant roles to use this endpoint
+    require_role(user, ["sale", "manager", "account"])
+
+    role = user.get("role")
+    current_sale_id = user.get("user_id")
+
+    # Determine effective sale filter
+    effective_sale_id: int | None = None
+    if role == "sale" and current_sale_id is not None:
+        # Sale can only see their own data; ignore query param
+        effective_sale_id = int(current_sale_id)
+    elif role in ("manager", "account") and sale_id is not None:
+        effective_sale_id = int(sale_id)
+
     query = db.query(Order)
     if created_from:
         try:
@@ -928,6 +946,8 @@ def get_revenue_by_product(
             query = query.filter(func.date(Order.created_at) <= dt_to)
         except ValueError:
             pass
+    if effective_sale_id is not None:
+        query = query.filter(Order.sale_id == effective_sale_id)
     order_ids = [o.id for o in query.all()]
     if not order_ids:
         return {"items": []}
