@@ -1947,14 +1947,19 @@ def export_orders_excel(
 
     # Columns (one row per order):
     # - Order Created Date
+    # - Order ID (order_code)
     # - Sale
+    # - Customer Name
     # - Payment Method
     # - Payment Status
     # - Order Status
+    # - Net Price
     ws.append(
         [
             "Order Created Date",
+            "Order ID",
             "Sale",
+            "Customer Name",
             "Payment Method",
             "Payment Status",
             "Order Status",
@@ -1969,7 +1974,9 @@ def export_orders_excel(
                 o.created_at.date().isoformat()
                 if getattr(o, "created_at", None)
                 else "",
+                o.order_code or "",
                 (sale_user.name if sale_user is not None else "") or "",
+                o.customer_name or "",
                 pay.payment_method or "",
                 pay.payment_status or "",
                 o.order_status or "",
