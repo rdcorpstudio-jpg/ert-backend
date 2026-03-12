@@ -1941,30 +1941,35 @@ def export_orders_excel(
     ws = wb.active
     ws.title = "Orders"
 
+    # Columns (one row per order):
+    # - Order Created Date
+    # - Sale
+    # - Payment Method
+    # - Payment Status
+    # - Order Status
     ws.append(
         [
-            "Order Code",
-            "Created At",
-            "Sale Name",
-            "Customer Name",
+            "Order Created Date",
+            "Sale",
             "Payment Method",
             "Payment Status",
             "Order Status",
-            "Shipping Date",
+            "Net Price",
         ]
     )
 
     for o, pay, sale_user in rows:
+        net_total = _order_net_total(db, o.id)
         ws.append(
             [
-                o.order_code,
-                o.created_at.isoformat() if getattr(o, "created_at", None) else "",
+                o.created_at.date().isoformat()
+                if getattr(o, "created_at", None)
+                else "",
                 (sale_user.name if sale_user is not None else "") or "",
-                o.customer_name or "",
                 pay.payment_method or "",
                 pay.payment_status or "",
                 o.order_status or "",
-                str(o.shipping_date or "") if o.shipping_date else "",
+                net_total,
             ]
         )
 
