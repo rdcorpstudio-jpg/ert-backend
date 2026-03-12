@@ -1892,6 +1892,7 @@ def export_orders_excel(
     created_to: str | None = Query(None, description="YYYY-MM-DD"),
     sale_id: int | None = Query(None, description="Filter by sale_id (optional)"),
     payment_method: str | None = Query(None, description="cod | transfer | card_2c2p | card_pay"),
+    payment_status: str | None = Query(None, description="Payment status filter (optional)"),
     order_status: str | None = Query(None, description="Order status filter (optional)"),
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1931,6 +1932,9 @@ def export_orders_excel(
 
     if payment_method:
         query = query.filter(OrderPayment.payment_method == payment_method)
+
+    if payment_status:
+        query = query.filter(OrderPayment.payment_status == payment_status)
 
     if order_status:
         query = query.filter(Order.order_status == order_status)
