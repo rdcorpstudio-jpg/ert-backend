@@ -8,6 +8,7 @@ class OrderCreate(BaseModel):
     shipping_address: str
     shipping_date: Optional[date] = None
     payment_method: Optional[str] = None
+    shipping_method: Optional[str] = None  # Normal (default) | Special
     invoice_text: Optional[str] = None
     note: Optional[str] = None
     shipping_note: Optional[str] = None

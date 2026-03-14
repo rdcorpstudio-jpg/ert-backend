@@ -73,7 +73,9 @@ def create_order(
         try:
             # 1️⃣ สร้าง Order
             order_code = generate_order_code(db)
-            tracking_for_special = "จัดส่งโดยพี่วัฒน์" if (getattr(data, "payment_method", None) or "").lower() == "special" else None
+            shipping_method_val = (getattr(data, "shipping_method", None) or "").strip() or "Normal"
+            if shipping_method_val.lower() not in ("normal", "special"):
+                shipping_method_val = "Normal"
             order = Order(
                 order_code=order_code,
                 sale_id=user["user_id"],
@@ -88,7 +90,7 @@ def create_order(
                 pageName=data.pageName,
                 installment_type=data.installment_type,
                 installment_months=data.installment_months,
-                tracking_number=tracking_for_special
+                shipping_method=shipping_method_val,
             )
 
             db.add(order)
@@ -496,12 +498,12 @@ def update_payment_status(
 
     old_order_status = order.order_status
 
-    # 5️⃣ 🔁 Sync order status (Special payment → order_status "Special" when Checked)
-    sync_order_status_with_payment(order, new_status, payment.payment_method)
+    # 5️⃣ 🔁 Sync order status (Special when payment Checked + shipping_method Special)
+    sync_order_status_with_payment(order, new_status, getattr(order, "shipping_method", None))
 
     # 5b. Auto-set tracking number for Special orders
     if order.order_status == "Special":
-        order.tracking_number = "จัดส่งโดยพี่วัฒน์"
+        order.tracking_number = "Special"
 
     # 6️⃣ Log การเปลี่ยน Payment
     log_order_change(
@@ -570,13 +572,12 @@ def update_order_status(
         raise HTTPException(status_code=404, detail="Order not found")
     payment = db.query(OrderPayment).filter(OrderPayment.order_id == order_id).first()
 
-    # 2b. Pack cannot change status for Special orders (own-fleet; account manages payment only)
-    if user["role"] == "pack" and payment:
-        if (payment.payment_method or "").strip().lower() == "special" or (order.order_status or "") == "Special":
-            raise HTTPException(
-                status_code=403,
-                detail="This order is Special (own-fleet). Packing team cannot change order status."
-            )
+    # 2b. Pack cannot change status for Special orders (shipping method Special)
+    if user["role"] == "pack" and (order.order_status or "") == "Special":
+        raise HTTPException(
+            status_code=403,
+            detail="This order is Special (shipping method). Packing team cannot change order status.",
+        )
 
     old_status = order.order_status
 
@@ -727,6 +728,55 @@ def update_shipping_date(
     db.commit()
 
     return {"message": "Shipping date updated"}
+
+
+@router.put("/{order_id}/shipping-method")
+def update_shipping_method(
+    order_id: int,
+    shipping_method: str = Query(..., description="Normal | Special"),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    require_role(user, ["sale", "manager"])
+
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if (order.order_status or "") == "Special":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot change shipping method when order status is already Special.",
+        )
+
+    method_val = (shipping_method or "").strip()
+    if method_val.lower() not in ("normal", "special"):
+        raise HTTPException(status_code=400, detail="shipping_method must be Normal or Special")
+
+    method_val = "Special" if method_val.lower() == "special" else "Normal"
+    old_val = getattr(order, "shipping_method", None) or "Normal"
+
+    if old_val == method_val:
+        return {"message": "Shipping method unchanged", "shipping_method": method_val}
+
+    order.shipping_method = method_val
+    log_order_change(
+        db=db,
+        order_id=order.id,
+        action="UPDATE_SHIPPING_METHOD",
+        old_value=old_val,
+        new_value=method_val,
+        user_id=user["user_id"],
+    )
+    create_order_alert(
+        db=db,
+        order_id=order.id,
+        alert_type="UPDATE_SHIPPING_METHOD",
+        message="มีการแก้ไขวิธีจัดส่ง (Shipping method)",
+        target_role="pack",
+    )
+    db.commit()
+    return {"message": "Shipping method updated", "shipping_method": method_val}
 
 
 @router.get("/alerts/count")
@@ -1082,7 +1132,7 @@ def get_revenue_by_sale_breakdown(
 
     if effective_sale_id is None:
         # Nothing to show if manager/account did not specify sale_id
-        return {"categories": [], "pages": [], "statuses": []}
+        return {"categories": [], "pages": [], "statuses": [], "shipping_methods": []}
 
     # Build common filters (by sale + created_at range)
     filters = [Order.sale_id == effective_sale_id]
@@ -1159,7 +1209,26 @@ def get_revenue_by_sale_breakdown(
         for r in status_rows
     ]
 
-    return {"categories": categories, "pages": pages, "statuses": statuses}
+    # Breakdown by shipping method
+    ship_rows = (
+        db.query(
+            func.coalesce(Order.shipping_method, "Normal").label("shipping_method"),
+            (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"),
+        )
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .filter(*filters)
+        .group_by(func.coalesce(Order.shipping_method, "Normal"))
+        .all()
+    )
+    shipping_methods = [
+        {
+            "name": (r.shipping_method or "Normal") or "Normal",
+            "revenue": round(float(r.revenue or 0), 2),
+        }
+        for r in ship_rows
+    ]
+
+    return {"categories": categories, "pages": pages, "statuses": statuses, "shipping_methods": shipping_methods}
 
 
 @router.get("")
@@ -1177,7 +1246,8 @@ def list_orders(
     invoice_required: bool | None = None,  # True: only orders that require invoice
     has_invoice_file: bool | None = None,  # True: has invoice/invoice_submit file; False: no such file
     has_tracking_number: bool | None = None,  # False: only orders without tracking number (for Tracking Number page)
-    exclude_payment_method: str | None = None,  # e.g. "special" to hide from packing page
+    exclude_payment_method: str | None = None,
+    shipping_method: str | None = None,  # e.g. "Normal" for Packing/Tracking pages
     user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1208,11 +1278,11 @@ def list_orders(
             OrderPayment.payment_status == payment_status
         )
 
-    # 3b. Filter: Payment method (multi: any of cod, transfer, card_2c2p, card_pay, special)
+    # 3b. Filter: Payment method (multi)
     if payment_method and len(payment_method) > 0:
         query = query.filter(OrderPayment.payment_method.in_(payment_method))
 
-    # 3b2. Exclude a payment method (e.g. packing page excludes "special")
+    # 3b2. Exclude a payment method
     if exclude_payment_method:
         query = query.filter(OrderPayment.payment_method != exclude_payment_method)
 
@@ -1259,6 +1329,10 @@ def list_orders(
         query = query.filter(
             (Order.tracking_number.is_(None)) | (func.coalesce(func.trim(Order.tracking_number), "") == "")
         )
+
+    # 5d. Filter: Shipping method (e.g. Packing/Tracking pages show only Normal)
+    if shipping_method:
+        query = query.filter(func.coalesce(Order.shipping_method, "Normal") == shipping_method)
 
     # 6️⃣ Search (order ID, customer name/phone, tracking number, sale name)
     if keyword:
@@ -1331,6 +1405,7 @@ def list_orders(
             "order_code": order.order_code,
             "order_status": order.order_status,
             "tracking_number": getattr(order, "tracking_number", None) or None,
+            "shipping_method": getattr(order, "shipping_method", None) or "Normal",
             "payment_status": payment.payment_status,
             "payment_method": payment.payment_method,
             "customer_name": order.customer_name,
@@ -1447,6 +1522,7 @@ def get_order_detail(
         "shipping_date": str(order.shipping_date) if order.shipping_date else None,
         "order_status": order.order_status,
         "tracking_number": getattr(order, "tracking_number", None) or None,
+        "shipping_method": getattr(order, "shipping_method", None) or "Normal",
         "payment_status": order.payment_status,
         "created_at": order.created_at.isoformat() if order.created_at else None,
         "pageName": order.pageName,

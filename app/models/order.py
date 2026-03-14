@@ -28,6 +28,7 @@ class Order(Base):
 
     order_status = Column(String(20), default="Pending")
     tracking_number = Column(String(255), nullable=True)
+    shipping_method = Column(String(20), default="Normal", nullable=False)  # Normal | Special
     payment_status = Column(String(20), default="Unchecked")
     # When order first becomes Checked, we store net total; product edit in Checked/Packing allowed only if current net == this.
     net_total_at_check = Column(Numeric(10, 2), nullable=True)
