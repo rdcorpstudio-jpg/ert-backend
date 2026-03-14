@@ -177,10 +177,23 @@ def upload_order_file(
             detail="Permission denied for this file type"
         )
 
-    # 3. อ่านไฟล์
+    # 3. For payment_slip replace: only when payment status is Unchecked; delete existing slip(s) first
+    if file_type == "payment_slip":
+        payment = db.query(OrderPayment).filter(OrderPayment.order_id == order_id).first()
+        if payment and (payment.payment_status or "").strip() != "Unchecked":
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot upload or replace payment slip when payment status is not Unchecked.",
+            )
+        db.query(OrderFile).filter(
+            OrderFile.order_id == order_id,
+            OrderFile.file_type == "payment_slip",
+        ).delete(synchronize_session=False)
+
+    # 4. อ่านไฟล์
     file_bytes = file.file.read()
 
-    # 4. Upload Google Drive (may fail if network/DNS cannot reach Google)
+    # 5. Upload Google Drive (may fail if network/DNS cannot reach Google)
     try:
         file_url = upload_file_to_drive(
             file=file_bytes,
@@ -196,7 +209,7 @@ def upload_order_file(
             ) from e
         raise
 
-    # 5. Save DB
+    # 6. Save DB
     order_file = OrderFile(
         order_id=order_id,
         file_type=file_type,
