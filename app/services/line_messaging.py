@@ -38,6 +38,7 @@ def _build_order_created_message(db: Session, order: Order) -> Optional[str]:
         "transfer": "โอน",
         "card_2c2p": "บัตรเครดิต (2C2P)",
         "card_pay": "บัตรเครดิต (Pay)",
+        "special": "Special (ส่งเอง)",
     }
     payment_method_text = payment_method_map.get(payment_method_raw, payment_method_raw or "-")
 

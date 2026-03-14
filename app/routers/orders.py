@@ -494,8 +494,8 @@ def update_payment_status(
 
     old_order_status = order.order_status
 
-    # 5️⃣ 🔁 Sync order status
-    sync_order_status_with_payment(order, new_status)
+    # 5️⃣ 🔁 Sync order status (Special payment → order_status "Special" when Checked)
+    sync_order_status_with_payment(order, new_status, payment.payment_method)
 
     # 6️⃣ Log การเปลี่ยน Payment
     log_order_change(
@@ -518,8 +518,8 @@ def update_payment_status(
             user_id=user["user_id"]
         )
 
-    # 7b. When order first becomes Checked, lock net total for product-edit rule
-    if order.order_status == "Checked" and order.net_total_at_check is None:
+    # 7b. When order first becomes Checked or Special, lock net total for product-edit rule
+    if order.order_status in ("Checked", "Special") and order.net_total_at_check is None:
         order.net_total_at_check = _order_net_total(db, order.id)
 
     # 8️⃣ commit ทีเดียว
@@ -558,10 +558,19 @@ def update_order_status(
                 detail="กรุณารับทราบ Alert ทั้งหมดก่อนเปลี่ยนสถานะออเดอร์ (กด Acknowledge ใน Section 1)"
             )
 
-    # 2️⃣ ดึง order
+    # 2️⃣ ดึง order + payment
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    payment = db.query(OrderPayment).filter(OrderPayment.order_id == order_id).first()
+
+    # 2b. Pack cannot change status for Special orders (own-fleet; account manages payment only)
+    if user["role"] == "pack" and payment:
+        if (payment.payment_method or "").strip().lower() == "special" or (order.order_status or "") == "Special":
+            raise HTTPException(
+                status_code=403,
+                detail="This order is Special (own-fleet). Packing team cannot change order status."
+            )
 
     old_status = order.order_status
 
@@ -1162,6 +1171,7 @@ def list_orders(
     invoice_required: bool | None = None,  # True: only orders that require invoice
     has_invoice_file: bool | None = None,  # True: has invoice/invoice_submit file; False: no such file
     has_tracking_number: bool | None = None,  # False: only orders without tracking number (for Tracking Number page)
+    exclude_payment_method: str | None = None,  # e.g. "special" to hide from packing page
     user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1192,9 +1202,13 @@ def list_orders(
             OrderPayment.payment_status == payment_status
         )
 
-    # 3b. Filter: Payment method (multi: any of cod, transfer, card_2c2p, card_pay)
+    # 3b. Filter: Payment method (multi: any of cod, transfer, card_2c2p, card_pay, special)
     if payment_method and len(payment_method) > 0:
         query = query.filter(OrderPayment.payment_method.in_(payment_method))
+
+    # 3b2. Exclude a payment method (e.g. packing page excludes "special")
+    if exclude_payment_method:
+        query = query.filter(OrderPayment.payment_method != exclude_payment_method)
 
     # 3c. Filter: Product category (multi: order has at least one item in any of these categories)
     if product_category and len(product_category) > 0:
