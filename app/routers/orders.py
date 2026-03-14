@@ -73,6 +73,7 @@ def create_order(
         try:
             # 1️⃣ สร้าง Order
             order_code = generate_order_code(db)
+            tracking_for_special = "จัดส่งโดยพี่วัฒน์" if (getattr(data, "payment_method", None) or "").lower() == "special" else None
             order = Order(
                 order_code=order_code,
                 sale_id=user["user_id"],
@@ -86,7 +87,8 @@ def create_order(
                 shipping_note=data.shipping_note,
                 pageName=data.pageName,
                 installment_type=data.installment_type,
-                installment_months=data.installment_months
+                installment_months=data.installment_months,
+                tracking_number=tracking_for_special
             )
 
             db.add(order)
@@ -496,6 +498,10 @@ def update_payment_status(
 
     # 5️⃣ 🔁 Sync order status (Special payment → order_status "Special" when Checked)
     sync_order_status_with_payment(order, new_status, payment.payment_method)
+
+    # 5b. Auto-set tracking number for Special orders
+    if order.order_status == "Special":
+        order.tracking_number = "จัดส่งโดยพี่วัฒน์"
 
     # 6️⃣ Log การเปลี่ยน Payment
     log_order_change(
