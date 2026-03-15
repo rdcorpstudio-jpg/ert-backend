@@ -1261,9 +1261,13 @@ def list_orders(
     has_tracking_number: bool | None = None,  # False: only orders without tracking number (for Tracking Number page)
     exclude_payment_method: str | None = None,
     shipping_method: str | None = None,  # e.g. "Normal" for Packing/Tracking pages
+    limit: int = 50,
+    offset: int = 0,
     user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    limit = max(1, min(500, limit))
+    offset = max(0, offset)
 
     # 1️⃣ เริ่มจาก join Order + Payment ก่อน
     query = (
@@ -1366,7 +1370,8 @@ def list_orders(
         # default: newest first
         query = query.order_by(Order.created_at.desc())
 
-    orders = query.limit(50).all()
+    total = query.count()
+    orders = query.offset(offset).limit(limit).all()
     order_ids = [o.id for o, _ in orders]
     sale_ids = list({o.sale_id for o, _ in orders if o.sale_id})
     sale_names = {}
@@ -1433,7 +1438,7 @@ def list_orders(
             "main_product_name": first_product_by_order.get(order.id),
         })
 
-    return result
+    return {"items": result, "total": total}
 
 
 
