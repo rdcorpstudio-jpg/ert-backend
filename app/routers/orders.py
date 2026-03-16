@@ -1404,7 +1404,8 @@ def list_orders(
         # default: newest first
         query = query.order_by(Order.created_at.desc())
 
-    orders = query.limit(50).all()
+    # Hard cap: allow up to 9999 orders in one response
+    orders = query.limit(9999).all()
     order_ids = [o.id for o, _ in orders]
     sale_ids = list({o.sale_id for o, _ in orders if o.sale_id})
     sale_names = {}
