@@ -1052,6 +1052,44 @@ def get_revenue_by_product(
     return {"items": items}
 
 
+@router.get("/revenue-by-payment-method")
+def get_revenue_by_payment_method(
+    created_from: str | None = Query(None, description="YYYY-MM-DD"),
+    created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Revenue by payment method (for dashboard). Manager/account only."""
+    require_role(user, ["manager", "account"])
+
+    query = (
+        db.query(
+            OrderPayment.payment_method.label("payment_method"),
+            (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"),
+        )
+        .join(Order, Order.id == OrderPayment.order_id)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+    )
+    if created_from:
+        try:
+            dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) >= dt_from)
+        except ValueError:
+            pass
+    if created_to:
+        try:
+            dt_to = datetime.strptime(created_to, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) <= dt_to)
+        except ValueError:
+            pass
+    rows = query.group_by(OrderPayment.payment_method).all()
+    items = [
+        {"name": (r.payment_method or "—") or "—", "revenue": round(float(r.revenue or 0), 2)}
+        for r in rows
+    ]
+    return {"items": items}
+
+
 @router.get("/revenue-by-sale")
 def get_revenue_by_sale(
     created_from: str | None = Query(None, description="YYYY-MM-DD"),
@@ -1261,13 +1299,9 @@ def list_orders(
     has_tracking_number: bool | None = None,  # False: only orders without tracking number (for Tracking Number page)
     exclude_payment_method: str | None = None,
     shipping_method: str | None = None,  # e.g. "Normal" for Packing/Tracking pages
-    limit: int = 50,
-    offset: int = 0,
     user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    limit = max(1, min(500, limit))
-    offset = max(0, offset)
 
     # 1️⃣ เริ่มจาก join Order + Payment ก่อน
     query = (
@@ -1370,8 +1404,7 @@ def list_orders(
         # default: newest first
         query = query.order_by(Order.created_at.desc())
 
-    total = query.count()
-    orders = query.offset(offset).limit(limit).all()
+    orders = query.limit(50).all()
     order_ids = [o.id for o, _ in orders]
     sale_ids = list({o.sale_id for o, _ in orders if o.sale_id})
     sale_names = {}
@@ -1438,7 +1471,7 @@ def list_orders(
             "main_product_name": first_product_by_order.get(order.id),
         })
 
-    return {"items": result, "total": total}
+    return result
 
 
 
