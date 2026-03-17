@@ -34,6 +34,8 @@ class Order(Base):
     net_total_at_check = Column(Numeric(10, 2), nullable=True)
 
     invoice_required = Column(Boolean, default=False)
+    # Optional invoice number (เลขที่ใบกำกับภาษี) filled by account/manager later
+    invoice_number = Column(String(50), nullable=True)
     invoice_name = Column(String(255), nullable=True)
     invoice_tax_id = Column(String(255), nullable=True)
     invoice_address = Column(String(255), nullable=True)

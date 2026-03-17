@@ -366,6 +366,56 @@ def update_order_invoice(
     return {"message": "Invoice request updated"}
 
 
+@router.get("/invoice-number-pending")
+def list_orders_missing_invoice_number(
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Orders that have no invoice_number yet (all orders)."""
+    require_role(user, ["account", "manager"])
+    orders = (
+        db.query(Order, OrderPayment)
+        .join(OrderPayment, OrderPayment.order_id == Order.id)
+        .filter(
+            func.coalesce(func.trim(Order.invoice_number), "") == "",
+        )
+        .order_by(Order.created_at.asc())
+        .all()
+    )
+    result = []
+    for order, payment in orders:
+        result.append(
+            {
+                "id": order.id,
+                "order_code": order.order_code,
+                "customer_name": order.customer_name,
+                "sale_id": order.sale_id,
+                "invoice_number": order.invoice_number,
+                "payment_status": payment.payment_status,
+            }
+        )
+    return result
+
+
+@router.put("/{order_id}/invoice-number")
+def update_invoice_number(
+    order_id: int,
+    invoice_number: str = Body(..., embed=True),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set or update invoice_number for an order (account/manager only)."""
+    require_role(user, ["account", "manager"])
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    cleaned = (invoice_number or "").strip()
+    order.invoice_number = cleaned or None
+    db.add(order)
+    db.commit()
+    return {"message": "Invoice number updated", "invoice_number": order.invoice_number}
+
+
 @router.get("/{order_id}/logs")
 def get_order_logs(
     order_id: int,
@@ -1466,6 +1516,7 @@ def list_orders(
             "shipping_note": order.shipping_note,
             "sale_id": order.sale_id,
             "sale_name": sale_names.get(order.sale_id) if order.sale_id else None,
+            "invoice_number": getattr(order, "invoice_number", None),
             "has_unread_alert": has_unread_alert,
             "has_invoice_submitted": has_invoice_submitted,
             "invoice_submit_file_url": invoice_submit_file_url,
