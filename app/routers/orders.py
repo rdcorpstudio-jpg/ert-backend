@@ -495,11 +495,12 @@ def update_payment_status(
     paid_note: str | None = None,
     db: Session = Depends(get_db)
 ):
-    # 1️⃣ เช็ค role (Account เท่านั้น)
-    if user["role"] not in ["account", "manager"]:
+    # 1️⃣ เช็ค role
+    role = user["role"]
+    if role not in ["account", "manager", "pack"]:
         raise HTTPException(
             status_code=403,
-            detail="Only account can change payment status"
+            detail="Only account/manager/pack can change payment status"
         )
 
     has_unread_alert = db.query(OrderAlert).filter(
@@ -526,6 +527,18 @@ def update_payment_status(
         raise HTTPException(status_code=404, detail="Payment not found")
 
     old_payment_status = payment.payment_status
+
+    # 2b. จำกัดสิทธิ์ของ pack: เปลี่ยนได้เฉพาะ COD: Unchecked → Checked
+    if role == "pack":
+        if not (
+            (payment.payment_method or "").strip().lower() == "cod"
+            and (old_payment_status or "").strip() == "Unchecked"
+            and (new_status or "").strip() == "Checked"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Pack can only change COD payment from Unchecked to Checked.",
+            )
 
     has_alert = db.query(OrderAlert).filter(
         OrderAlert.order_id == order_id,
