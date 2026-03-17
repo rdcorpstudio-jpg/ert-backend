@@ -38,6 +38,7 @@ import io
 from openpyxl import Workbook
 from app.models.order_freebie import OrderFreebie
 from app.models.user import User
+from app.models.page_name import PageName
 from app.services.line_messaging import send_order_created_notification
 
 router = APIRouter(prefix="/orders")
@@ -364,6 +365,54 @@ def update_order_invoice(
 
     db.commit()
     return {"message": "Invoice request updated"}
+
+
+@router.get("/page-names")
+def list_page_names(
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List all saved page names (for Create Order dropdown)."""
+    require_role(user, ["sale", "manager", "account", "pack"])
+    rows = db.query(PageName).order_by(PageName.name.asc()).all()
+    return [{"id": r.id, "name": r.name} for r in rows]
+
+
+@router.post("/page-names")
+def create_page_name(
+    name: str = Body(..., embed=True),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a new page name (manager only)."""
+    require_role(user, ["manager"])
+    cleaned = (name or "").strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Name is required.")
+    exists = db.query(PageName).filter(PageName.name == cleaned).first()
+    if exists:
+        return {"id": exists.id, "name": exists.name}
+    row = PageName(name=cleaned)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "name": row.name}
+
+
+@router.delete("/page-names/{page_name_id}")
+def delete_page_name(
+    page_name_id: int,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a page name (manager only)."""
+    require_role(user, ["manager"])
+    row = db.query(PageName).filter(PageName.id == page_name_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    db.delete(row)
+    db.commit()
+    return {"message": "Deleted"}
 
 
 @router.get("/invoice-number-pending")

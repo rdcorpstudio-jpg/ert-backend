@@ -30,6 +30,7 @@ from app.models import (
     user,
     freebie,
     order_item_freebie,
+    page_name,
 )
 
 target_metadata = Base.metadata
