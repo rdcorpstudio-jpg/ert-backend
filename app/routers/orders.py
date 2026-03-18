@@ -1695,6 +1695,7 @@ def get_order_detail(
         "note": order.note,
         "invoice_required": getattr(order, "invoice_required", False),
         "invoice_text": order.invoice_text,
+        "invoice_number": getattr(order, "invoice_number", None),
     }
 
     payment_data = None
