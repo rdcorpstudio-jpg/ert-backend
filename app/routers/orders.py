@@ -1145,22 +1145,44 @@ def get_revenue_by_product(
     if (group_by or "category").strip().lower() == "product_name":
         # Group by product name (snapshot on order item)
         rows = (
-            db.query(OrderItem.product_name, (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"))
+            db.query(
+                OrderItem.product_name,
+                (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"),
+                func.count(OrderItem.id).label("pcs"),
+            )
             .filter(OrderItem.order_id.in_(order_ids))
             .group_by(OrderItem.product_name)
             .all()
         )
-        items = [{"name": (r.product_name or "—") or "—", "revenue": round(float(r.revenue or 0), 2)} for r in rows]
+        items = [
+            {
+                "name": (r.product_name or "—") or "—",
+                "revenue": round(float(r.revenue or 0), 2),
+                "pcs": int(r.pcs or 0),
+            }
+            for r in rows
+        ]
     else:
         # Group by product category (join Product)
         rows = (
-            db.query(Product.category, (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"))
+            db.query(
+                Product.category,
+                (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"),
+                func.count(OrderItem.id).label("pcs"),
+            )
             .join(OrderItem, OrderItem.product_id == Product.id)
             .filter(OrderItem.order_id.in_(order_ids))
             .group_by(Product.category)
             .all()
         )
-        items = [{"name": (r.category or "—") or "—", "revenue": round(float(r.revenue or 0), 2)} for r in rows]
+        items = [
+            {
+                "name": (r.category or "—") or "—",
+                "revenue": round(float(r.revenue or 0), 2),
+                "pcs": int(r.pcs or 0),
+            }
+            for r in rows
+        ]
     return {"items": items}
 
 
@@ -1317,6 +1339,7 @@ def get_revenue_by_sale_breakdown(
         db.query(
             Product.category.label("category"),
             (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"),
+            func.count(OrderItem.id).label("pcs"),
         )
         .join(OrderItem, OrderItem.product_id == Product.id)
         .join(Order, Order.id == OrderItem.order_id)
@@ -1328,6 +1351,7 @@ def get_revenue_by_sale_breakdown(
         {
             "name": (r.category or "—") or "—",
             "revenue": round(float(r.revenue or 0), 2),
+            "pcs": int(r.pcs or 0),
         }
         for r in cat_rows
     ]
@@ -1337,6 +1361,7 @@ def get_revenue_by_sale_breakdown(
         db.query(
             Order.pageName.label("page_name"),
             (func.sum(OrderItem.unit_price - OrderItem.discount)).label("revenue"),
+            func.count(OrderItem.id).label("pcs"),
         )
         .join(OrderItem, OrderItem.order_id == Order.id)
         .filter(*filters)
@@ -1347,6 +1372,7 @@ def get_revenue_by_sale_breakdown(
         {
             "name": (r.page_name or "—") or "—",
             "revenue": round(float(r.revenue or 0), 2),
+            "pcs": int(r.pcs or 0),
         }
         for r in page_rows
     ]
