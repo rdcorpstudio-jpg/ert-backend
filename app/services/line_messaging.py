@@ -83,6 +83,9 @@ def _build_order_created_message(db: Session, order: Order) -> Optional[str]:
         ]
     freebie_text = ", ".join(freebie_names) if freebie_names else "-"
 
+    page_name_raw = (getattr(order, "pageName", None) or "").strip()
+    page_name_text = page_name_raw if page_name_raw else "-"
+
     net_total = _order_net_total(db, order.id)
     net_text = f"{net_total:,.2f} บาท"
 
@@ -96,7 +99,8 @@ def _build_order_created_message(db: Session, order: Order) -> Optional[str]:
         f"😚 ลูกค้าซื้อ: {product_text}\n"
         f"🔖จ่าย : {payment_method_text}\n"
         f"🔖ส่วนลด : {discount_text}\n"
-        f"🔖 แถม : {freebie_text} \n\n"
+        f"🔖 แถม : {freebie_text} \n"
+        f"จากเพจ: {page_name_text}\n\n"
         f"👍ยอดรวม: {net_text}\n"
         f"หมายเหตุ: {shipping_note}\n"
     )
