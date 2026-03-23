@@ -1315,12 +1315,14 @@ def get_revenue_by_sale_breakdown(
     elif role in ("manager", "account") and sale_id is not None:
         effective_sale_id = int(sale_id)
 
-    if effective_sale_id is None:
-        # Nothing to show if manager/account did not specify sale_id
+    # Sale role must have a sale id; manager/account may omit sale_id = all sales in range
+    if effective_sale_id is None and role == "sale":
         return {"categories": [], "pages": [], "statuses": [], "shipping_methods": []}
 
-    # Build common filters (by sale + created_at range)
-    filters = [Order.sale_id == effective_sale_id]
+    # Build common filters (optional sale + created_at range)
+    filters: list = []
+    if effective_sale_id is not None:
+        filters.append(Order.sale_id == effective_sale_id)
     if created_from:
         try:
             dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
