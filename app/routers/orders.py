@@ -1439,6 +1439,8 @@ def list_orders(
     has_tracking_number: bool | None = None,  # False: only orders without tracking number (for Tracking Number page)
     exclude_payment_method: str | None = None,
     shipping_method: str | None = None,  # e.g. "Normal" for Packing/Tracking pages
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    page_size: int = Query(50, ge=1, le=100, description="Rows per page (max 100)"),
     user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1537,45 +1539,60 @@ def list_orders(
             | User.name.ilike(kw)
         )
 
-    # 7️⃣ Sorting
+    # 7️⃣ Total (distinct order ids — some joins can duplicate Order rows)
+    count_subq = query.with_entities(Order.id).distinct().subquery()
+    total = db.query(func.count()).select_from(count_subq).scalar() or 0
+
+    # 8️⃣ Sorting + pagination
     if sort_by == "oldest":
         query = query.order_by(Order.created_at.asc())
     else:
-        # default: newest first
         query = query.order_by(Order.created_at.desc())
 
-    # Hard cap: allow up to 9999 orders in one response
-    orders = query.limit(9999).all()
+    orders = (
+        query.offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
     order_ids = [o.id for o, _ in orders]
     sale_ids = list({o.sale_id for o, _ in orders if o.sale_id})
     sale_names = {}
     if sale_ids:
         for uid, uname in db.query(User.id, User.name).filter(User.id.in_(sale_ids)).all():
             sale_names[uid] = uname or ""
-    items = (
-        db.query(OrderItem.order_id, OrderItem.product_name)
-        .filter(OrderItem.order_id.in_(order_ids))
-        .order_by(OrderItem.order_id, OrderItem.id)
-        .all()
-    )
+
+    if order_ids:
+        items = (
+            db.query(OrderItem.order_id, OrderItem.product_name)
+            .filter(OrderItem.order_id.in_(order_ids))
+            .order_by(OrderItem.order_id, OrderItem.id)
+            .all()
+        )
+    else:
+        items = []
     first_product_by_order = {}
     for oid, pname in items:
         if oid not in first_product_by_order:
             first_product_by_order[oid] = pname
 
-    order_ids_with_invoice_submitted = set(
-        oid for (oid,) in db.query(OrderFile.order_id)
-        .filter(OrderFile.order_id.in_(order_ids), OrderFile.file_type == "invoice_submit")
-        .distinct()
-        .all()
-    )
+    if order_ids:
+        order_ids_with_invoice_submitted = set(
+            oid for (oid,) in db.query(OrderFile.order_id)
+            .filter(OrderFile.order_id.in_(order_ids), OrderFile.file_type == "invoice_submit")
+            .distinct()
+            .all()
+        )
 
-    invoice_submit_rows = (
-        db.query(OrderFile.order_id, OrderFile.file_url)
-        .filter(OrderFile.order_id.in_(order_ids), OrderFile.file_type == "invoice_submit")
-        .order_by(OrderFile.order_id, OrderFile.id)
-        .all()
-    )
+        invoice_submit_rows = (
+            db.query(OrderFile.order_id, OrderFile.file_url)
+            .filter(OrderFile.order_id.in_(order_ids), OrderFile.file_type == "invoice_submit")
+            .order_by(OrderFile.order_id, OrderFile.id)
+            .all()
+        )
+    else:
+        order_ids_with_invoice_submitted = set()
+        invoice_submit_rows = []
+
     invoice_submit_url_by_order = {}
     for oid, url in invoice_submit_rows:
         if oid not in invoice_submit_url_by_order:
@@ -1583,11 +1600,18 @@ def list_orders(
 
     result = []
 
+    unread_order_ids: set[int] = set()
+    if order_ids:
+        unread_order_ids = {
+            oid
+            for (oid,) in db.query(OrderAlert.order_id)
+            .filter(OrderAlert.order_id.in_(order_ids), OrderAlert.is_read == False)
+            .distinct()
+            .all()
+        }
+
     for order, payment in orders:
-        has_unread_alert = db.query(OrderAlert).filter(
-            OrderAlert.order_id == order.id,
-            OrderAlert.is_read == False
-        ).count() > 0
+        has_unread_alert = order.id in unread_order_ids
 
         has_invoice_submitted = order.id in order_ids_with_invoice_submitted
         invoice_submit_file_url = invoice_submit_url_by_order.get(order.id)
@@ -1614,7 +1638,7 @@ def list_orders(
             "main_product_name": first_product_by_order.get(order.id),
         })
 
-    return result
+    return {"items": result, "total": total, "page": page, "page_size": page_size}
 
 
 
