@@ -224,6 +224,36 @@ def upload_order_file(
 
     return {"url": file_url}
 
+
+@router.delete("/{order_id}/invoice-submit-files/{file_id}")
+def delete_invoice_submit_file(
+    order_id: int,
+    file_id: int,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    require_role(user, ["manager"])
+
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    target_file = (
+        db.query(OrderFile)
+        .filter(
+            OrderFile.id == file_id,
+            OrderFile.order_id == order_id,
+            OrderFile.file_type == "invoice_submit",
+        )
+        .first()
+    )
+    if not target_file:
+        raise HTTPException(status_code=404, detail="Invoice submit file not found")
+
+    db.delete(target_file)
+    db.commit()
+    return {"message": "Invoice submit file deleted", "file_id": file_id}
+
 @router.put("/{order_id}/address")
 def update_shipping_address(
     order_id: int,
