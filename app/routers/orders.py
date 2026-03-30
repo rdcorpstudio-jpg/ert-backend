@@ -1462,6 +1462,7 @@ def list_orders(
     sort_by: str | None = None,
     only_my: bool | None = None,
     shipping_date: str | None = None,  # YYYY-MM-DD
+    missing_shipping_date: bool | None = None,  # True: only orders with no shipping date set
     payment_method: list[str] | None = Query(None),  # multi: cod, transfer, card_2c2p, card_pay
     product_category: list[str] | None = Query(None),  # multi: order has item in any of these categories
     invoice_required: bool | None = None,  # True: only orders that require invoice
@@ -1488,7 +1489,9 @@ def list_orders(
         query = query.filter(Order.order_status == order_status)
 
     # 2b. Filter: Shipping date (e.g. for pack shortcut "today", format YYYY-MM-DD)
-    if shipping_date:
+    if missing_shipping_date is True:
+        query = query.filter(Order.shipping_date.is_(None))
+    elif shipping_date:
         try:
             sd = datetime.strptime(shipping_date, "%Y-%m-%d").date()
             query = query.filter(Order.shipping_date == sd)
