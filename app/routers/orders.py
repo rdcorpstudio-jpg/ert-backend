@@ -1364,6 +1364,78 @@ def get_revenue_by_page_name(
     return {"items": items}
 
 
+@router.get("/revenue-by-shipping-payment-buckets")
+def get_revenue_by_shipping_payment_buckets(
+    created_from: str | None = Query(None, description="YYYY-MM-DD"),
+    created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    product_category: list[str] | None = Query(None, description="Only orders with an item in any of these categories"),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Dashboard buckets: Pending, Checked, Packing, then Shipped/Success split by COD vs non-COD and payment status."""
+    require_role(user, ["manager", "account"])
+
+    q = _revenue_orders_query(db, created_from, created_to, product_category)
+    orders = q.all()
+    order_ids = [o.id for o in orders]
+    payments_by_order: dict[int, OrderPayment] = {}
+    if order_ids:
+        for p in db.query(OrderPayment).filter(OrderPayment.order_id.in_(order_ids)).all():
+            payments_by_order[p.order_id] = p
+
+    pending = checked = packing = ss_cod_checked = ss_cod_paid_recv = ss_non_cod = other = 0.0
+
+    for o in orders:
+        net = _order_net_total(db, o.id)
+        if net <= 0:
+            continue
+        s = (o.order_status or "").strip()
+        pay = payments_by_order.get(o.id)
+        pm = (pay.payment_method or "").strip().lower() if pay else ""
+        ps = (pay.payment_status or "").strip() if pay else ""
+
+        if s == "Pending":
+            pending += net
+        elif s == "Checked":
+            checked += net
+        elif s == "Packing":
+            packing += net
+        elif s in ("Shipped", "Success"):
+            if pm == "cod":
+                if ps == "Checked":
+                    ss_cod_checked += net
+                elif ps in ("Paid", "Received"):
+                    ss_cod_paid_recv += net
+                else:
+                    other += net
+            else:
+                ss_non_cod += net
+        else:
+            other += net
+
+    items = [
+        {"key": "pending", "label": "Order status: Pending", "revenue": round(pending, 2)},
+        {"key": "checked", "label": "Order status: Checked", "revenue": round(checked, 2)},
+        {"key": "packing", "label": "Order status: Packing", "revenue": round(packing, 2)},
+        {
+            "key": "ss_cod_checked",
+            "label": "Shipped or Success · COD · payment status Checked",
+            "revenue": round(ss_cod_checked, 2),
+        },
+        {
+            "key": "ss_cod_paid_received",
+            "label": "Shipped or Success · COD · payment status Paid or Received",
+            "revenue": round(ss_cod_paid_recv, 2),
+        },
+        {
+            "key": "ss_non_cod",
+            "label": "Shipped or Success · payment method not COD",
+            "revenue": round(ss_non_cod, 2),
+        },
+    ]
+    return {"items": items, "other_revenue": round(other, 2)}
+
+
 @router.get("/revenue-by-sale-breakdown")
 def get_revenue_by_sale_breakdown(
     created_from: str | None = Query(None, description="YYYY-MM-DD"),
