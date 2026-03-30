@@ -25,6 +25,7 @@ from app.core.status_sync import sync_order_status_with_payment
 from app.core.order_status_rules import can_change_order_status
 from app.utils.order_alert import create_order_alert
 from app.models.order_alert import OrderAlert
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from app.models.order_item import OrderItem
 from app.models.product import Product
@@ -55,6 +56,38 @@ def _order_net_total(db: Session, order_id: int) -> float:
     """Sum of (unit_price - discount) for all order items."""
     items = db.query(OrderItem).filter(OrderItem.order_id == order_id).all()
     return sum(float(i.unit_price) - float(i.discount) for i in items)
+
+
+def _revenue_orders_query(
+    db: Session,
+    created_from: str | None,
+    created_to: str | None,
+    product_category: list[str] | None,
+):
+    """Orders in created_at range; optional: order has at least one item whose product category is in the list."""
+    q = db.query(Order)
+    if created_from:
+        try:
+            dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
+            q = q.filter(func.date(Order.created_at) >= dt_from)
+        except ValueError:
+            pass
+    if created_to:
+        try:
+            dt_to = datetime.strptime(created_to, "%Y-%m-%d").date()
+            q = q.filter(func.date(Order.created_at) <= dt_to)
+        except ValueError:
+            pass
+    if product_category and len(product_category) > 0:
+        order_ids_subq = (
+            db.query(OrderItem.order_id)
+            .join(Product, Product.id == OrderItem.product_id)
+            .filter(Product.category.in_(product_category))
+            .distinct()
+            .subquery()
+        )
+        q = q.filter(Order.id.in_(order_ids_subq))
+    return q
 
 
 from fastapi import Form
@@ -955,23 +988,12 @@ def get_my_alert_count(
 def get_revenue_summary(
     created_from: str | None = Query(None, description="YYYY-MM-DD"),
     created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    product_category: list[str] | None = Query(None, description="Only orders with an item in any of these categories"),
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Revenue by status bucket (by order created_at). Default: all time."""
-    query = db.query(Order)
-    if created_from:
-        try:
-            dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
-            query = query.filter(func.date(Order.created_at) >= dt_from)
-        except ValueError:
-            pass
-    if created_to:
-        try:
-            dt_to = datetime.strptime(created_to, "%Y-%m-%d").date()
-            query = query.filter(func.date(Order.created_at) <= dt_to)
-        except ValueError:
-            pass
+    query = _revenue_orders_query(db, created_from, created_to, product_category)
     orders = query.all()
     pending_revenue = 0.0
     checked_revenue = 0.0
@@ -1037,23 +1059,12 @@ def get_revenue_summary(
 def get_revenue_by_date(
     created_from: str | None = Query(None, description="YYYY-MM-DD"),
     created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    product_category: list[str] | None = Query(None, description="Only orders with an item in any of these categories"),
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Revenue by day (by order created_at date). For dashboard chart. Returns list of { date, ...revenues }."""
-    query = db.query(Order)
-    if created_from:
-        try:
-            dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
-            query = query.filter(func.date(Order.created_at) >= dt_from)
-        except ValueError:
-            pass
-    if created_to:
-        try:
-            dt_to = datetime.strptime(created_to, "%Y-%m-%d").date()
-            query = query.filter(func.date(Order.created_at) <= dt_to)
-        except ValueError:
-            pass
+    query = _revenue_orders_query(db, created_from, created_to, product_category)
     orders = query.order_by(Order.created_at.asc()).all()
     # Group by date
     from collections import defaultdict
@@ -1135,6 +1146,7 @@ def get_revenue_by_product(
         None,
         description="Optional sale id to filter by (sale role is always limited to own id).",
     ),
+    product_category: list[str] | None = Query(None, description="Only orders with an item in any of these categories"),
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1153,19 +1165,7 @@ def get_revenue_by_product(
     elif role in ("manager", "account") and sale_id is not None:
         effective_sale_id = int(sale_id)
 
-    query = db.query(Order)
-    if created_from:
-        try:
-            dt_from = datetime.strptime(created_from, "%Y-%m-%d").date()
-            query = query.filter(func.date(Order.created_at) >= dt_from)
-        except ValueError:
-            pass
-    if created_to:
-        try:
-            dt_to = datetime.strptime(created_to, "%Y-%m-%d").date()
-            query = query.filter(func.date(Order.created_at) <= dt_to)
-        except ValueError:
-            pass
+    query = _revenue_orders_query(db, created_from, created_to, product_category)
     if effective_sale_id is not None:
         query = query.filter(Order.sale_id == effective_sale_id)
     order_ids = [o.id for o in query.all()]
@@ -1220,6 +1220,7 @@ def get_revenue_by_product(
 def get_revenue_by_payment_method(
     created_from: str | None = Query(None, description="YYYY-MM-DD"),
     created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    product_category: list[str] | None = Query(None, description="Only orders with an item in any of these categories"),
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1246,6 +1247,15 @@ def get_revenue_by_payment_method(
             query = query.filter(func.date(Order.created_at) <= dt_to)
         except ValueError:
             pass
+    if product_category and len(product_category) > 0:
+        order_ids_subq = (
+            db.query(OrderItem.order_id)
+            .join(Product, Product.id == OrderItem.product_id)
+            .filter(Product.category.in_(product_category))
+            .distinct()
+            .subquery()
+        )
+        query = query.filter(Order.id.in_(order_ids_subq))
     rows = query.group_by(OrderPayment.payment_method).all()
     items = [
         {"name": (r.payment_method or "—") or "—", "revenue": round(float(r.revenue or 0), 2)}
@@ -1262,6 +1272,7 @@ def get_revenue_by_sale(
         None,
         description="Optional: filter by specific sale id (manager/account only)",
     ),
+    product_category: list[str] | None = Query(None, description="Only orders with an item in any of these categories"),
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1306,6 +1317,15 @@ def get_revenue_by_sale(
             query = query.filter(func.date(Order.created_at) <= dt_to)
         except ValueError:
             pass
+    if product_category and len(product_category) > 0:
+        order_ids_subq = (
+            db.query(OrderItem.order_id)
+            .join(Product, Product.id == OrderItem.product_id)
+            .filter(Product.category.in_(product_category))
+            .distinct()
+            .subquery()
+        )
+        query = query.filter(Order.id.in_(order_ids_subq))
     rows = query.group_by(Order.sale_id, User.name).all()
     items = [
         {
@@ -1316,6 +1336,31 @@ def get_revenue_by_sale(
         }
         for r in rows
     ]
+    return {"items": items}
+
+
+@router.get("/revenue-by-page-name")
+def get_revenue_by_page_name(
+    created_from: str | None = Query(None, description="YYYY-MM-DD"),
+    created_to: str | None = Query(None, description="YYYY-MM-DD"),
+    product_category: list[str] | None = Query(None, description="Only orders with an item in any of these categories"),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Revenue by order pageName (marketing page), full order net total per order. Sorted by revenue descending."""
+    require_role(user, ["manager", "account"])
+
+    q = _revenue_orders_query(db, created_from, created_to, product_category)
+    orders = q.all()
+    by_page: dict[str, float] = defaultdict(float)
+    for o in orders:
+        net = _order_net_total(db, o.id)
+        if net <= 0:
+            continue
+        key = (o.pageName or "").strip() or "—"
+        by_page[key] += net
+    items = [{"name": k, "revenue": round(v, 2)} for k, v in by_page.items()]
+    items.sort(key=lambda x: -x["revenue"])
     return {"items": items}
 
 
