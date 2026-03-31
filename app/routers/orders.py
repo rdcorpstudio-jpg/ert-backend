@@ -2488,3 +2488,41 @@ def add_order_freebie(
     return {"message": "Freebie added to order"}
 
 
+@router.put("/{order_id}/freebies")
+def set_order_freebie(
+    order_id: int,
+    freebie_id: int | None = None,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Replace order-level freebies with one selected freebie (or clear when null)."""
+    if user["role"] not in ["sale", "manager"]:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # Keep same editability gate as main product editing
+    current_net = _order_net_total(db, order.id)
+    net_at_check = float(order.net_total_at_check) if getattr(order, "net_total_at_check", None) is not None else None
+    if not can_edit_product(
+        user["role"], order.order_status, net_total=current_net, net_total_at_check=net_at_check
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Free gift item cannot be edited: order is Shipped or later, or (Checked/Packing) net total has changed.",
+        )
+
+    db.query(OrderFreebie).filter(OrderFreebie.order_id == order_id).delete(synchronize_session=False)
+
+    if freebie_id is not None:
+        freebie = db.query(Freebie).filter(Freebie.id == freebie_id).first()
+        if not freebie:
+            raise HTTPException(status_code=404, detail="Freebie not found")
+        db.add(OrderFreebie(order_id=order_id, freebie_id=freebie_id))
+
+    db.commit()
+    return {"message": "Order freebie updated", "order_id": order_id, "freebie_id": freebie_id}
+
+
