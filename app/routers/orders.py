@@ -2174,22 +2174,24 @@ def update_order_item_discount(
 @router.post("/items/{order_item_id}/freebies")
 def add_order_item_freebie(
     order_item_id: int,
-    freebie_name: str,
+    freebie_id: int,
     user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if user["role"] not in ["sale", "manager"]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
+    # Replace existing freebies on this item with a single selected freebie id
+    db.query(OrderItemFreebie).filter(OrderItemFreebie.order_item_id == order_item_id).delete(synchronize_session=False)
     freebie = OrderItemFreebie(
         order_item_id=order_item_id,
-        freebie_name=freebie_name
+        freebie_id=freebie_id,
     )
 
     db.add(freebie)
     db.commit()
 
-    return {"message": "Freebie added to order item"}
+    return {"message": "Freebie set for order item", "order_item_id": order_item_id, "freebie_id": freebie_id}
 
 
 @router.get("/dashboard/kpi")
@@ -2477,14 +2479,19 @@ def add_order_freebie(
     db: Session = Depends(get_db)
 ):
 
+    if user["role"] not in ["sale", "manager"]:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    # Replace existing order-level freebies with a single selected freebie id
+    db.query(OrderFreebie).filter(OrderFreebie.order_id == order_id).delete(synchronize_session=False)
     new_freebie = OrderFreebie(
         order_id=order_id,
-        freebie_id=freebie_id
+        freebie_id=freebie_id,
     )
 
     db.add(new_freebie)
     db.commit()
 
-    return {"message": "Freebie added to order"}
+    return {"message": "Freebie set for order", "order_id": order_id, "freebie_id": freebie_id}
 
 
