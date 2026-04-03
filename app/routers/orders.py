@@ -26,7 +26,7 @@ from app.core.order_status_rules import can_change_order_status
 from app.utils.order_alert import create_order_alert
 from app.models.order_alert import OrderAlert
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from app.models.order_item import OrderItem
 from app.models.product import Product
 from app.models.order_item_freebie import OrderItemFreebie
@@ -41,6 +41,7 @@ from app.models.order_freebie import OrderFreebie
 from app.models.user import User
 from app.models.page_name import PageName
 from app.services.line_messaging import send_order_created_notification
+from googleapiclient.errors import HttpError
 
 router = APIRouter(prefix="/orders")
 
@@ -234,6 +235,16 @@ def upload_order_file(
             filename=file.filename,
             folder_id=rule["folder_id"]
         )
+    except HttpError as e:
+        # Google returned 403/404/etc.; was surfacing as uncaught 500. Log full error on the server.
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Google Drive upload failed. Ask an admin to check: service account JSON on the server, "
+                "Drive API enabled, and that each upload folder is shared with the service account email."
+            ),
+        ) from e
     except Exception as e:
         err_msg = str(e).lower()
         if "oauth2.googleapis.com" in err_msg or "unable to find the server" in err_msg or "getaddrinfo failed" in err_msg or "transport" in err_msg:
@@ -1956,6 +1967,54 @@ def get_order_detail(
     }
 
 
+def _purge_order_cascade(db: Session, order: Order) -> None:
+    """Delete order rows in FK-safe order (same as manager delete)."""
+    order_id = order.id
+    order_item_ids = [r[0] for r in db.query(OrderItem.id).filter(OrderItem.order_id == order_id).all()]
+    if order_item_ids:
+        db.query(OrderItemFreebie).filter(OrderItemFreebie.order_item_id.in_(order_item_ids)).delete(synchronize_session=False)
+    db.query(OrderItem).filter(OrderItem.order_id == order_id).delete(synchronize_session=False)
+    db.query(OrderFreebie).filter(OrderFreebie.order_id == order_id).delete(synchronize_session=False)
+    db.query(OrderFile).filter(OrderFile.order_id == order_id).delete(synchronize_session=False)
+    db.query(OrderLog).filter(OrderLog.order_id == order_id).delete(synchronize_session=False)
+    db.query(OrderAlert).filter(OrderAlert.order_id == order_id).delete(synchronize_session=False)
+    db.query(OrderPayment).filter(OrderPayment.order_id == order_id).delete(synchronize_session=False)
+    db.delete(order)
+
+
+@router.delete("/{order_id}/abandon-create")
+def abandon_create_order(
+    order_id: int,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """When create-order flow fails after POST /orders (e.g. Drive upload), sale can remove the orphan Pending order."""
+    require_role(user, ["sale", "manager"])
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if (order.order_status or "").strip() != "Pending":
+        raise HTTPException(status_code=400, detail="Only Pending orders can be abandoned")
+
+    role = user.get("role")
+    if role == "sale":
+        if order.sale_id != user.get("user_id"):
+            raise HTTPException(status_code=403, detail="Permission denied")
+        if order.created_at:
+            created = order.created_at
+            if getattr(created, "tzinfo", None) is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - created > timedelta(minutes=60):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Order is too old to abandon automatically; ask a manager to delete it if needed.",
+                )
+
+    _purge_order_cascade(db, order)
+    db.commit()
+    return {"message": "Order removed", "order_id": order_id}
+
+
 @router.delete("/{order_id_or_code}")
 def delete_order(
     order_id_or_code: str,
@@ -1973,17 +2032,7 @@ def delete_order(
         raise HTTPException(status_code=404, detail="Order not found")
 
     order_id = order.id
-    # Delete in dependency order: item freebies -> order items -> order freebies -> files, logs, alerts -> payment -> order
-    order_item_ids = [r[0] for r in db.query(OrderItem.id).filter(OrderItem.order_id == order_id).all()]
-    if order_item_ids:
-        db.query(OrderItemFreebie).filter(OrderItemFreebie.order_item_id.in_(order_item_ids)).delete(synchronize_session=False)
-    db.query(OrderItem).filter(OrderItem.order_id == order_id).delete(synchronize_session=False)
-    db.query(OrderFreebie).filter(OrderFreebie.order_id == order_id).delete(synchronize_session=False)
-    db.query(OrderFile).filter(OrderFile.order_id == order_id).delete(synchronize_session=False)
-    db.query(OrderLog).filter(OrderLog.order_id == order_id).delete(synchronize_session=False)
-    db.query(OrderAlert).filter(OrderAlert.order_id == order_id).delete(synchronize_session=False)
-    db.query(OrderPayment).filter(OrderPayment.order_id == order_id).delete(synchronize_session=False)
-    db.delete(order)
+    _purge_order_cascade(db, order)
     db.commit()
     return {"message": "Order and all related data deleted", "order_id": order_id, "order_code": order_id_or_code}
 
