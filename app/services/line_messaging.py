@@ -1,9 +1,12 @@
 import json
+import logging
 import os
 from typing import Optional
 from urllib import request, error
 
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.models.order import Order
 from app.models.user import User
@@ -15,7 +18,8 @@ from app.models.order_item_freebie import OrderItemFreebie
 from app.models.line_notification_config import LineNotificationConfig
 
 
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+def _channel_access_token_from_env() -> str:
+    return (os.getenv("LINE_CHANNEL_ACCESS_TOKEN") or "").strip()
 
 
 def _order_net_total(db: Session, order_id: int) -> float:
@@ -116,12 +120,10 @@ def _build_order_created_message(db: Session, order: Order) -> Optional[str]:
 
 
 def send_order_created_notification(db: Session, order_id: int) -> None:
-    """Push LINE message when a new Pending order is created. Fails silently on error."""
-    if not LINE_CHANNEL_ACCESS_TOKEN:
-        return
-
+    """Push LINE message when a new Pending order is created. Logs errors; does not raise."""
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
+        logger.warning("LINE order-created notify: order id=%s not found", order_id)
         return
 
     # Find first active line config row; later we can filter by category.
@@ -131,34 +133,67 @@ def send_order_created_notification(db: Session, order_id: int) -> None:
         .order_by(LineNotificationConfig.id.asc())
         .first()
     )
-    if not config or not config.group_id:
+    if not config:
+        logger.warning(
+            "LINE order-created notify: no active row in line_notification_config "
+            "(need is_active=true and group_id)"
+        )
+        return
+    if not (config.group_id or "").strip():
+        logger.warning(
+            "LINE order-created notify: line_notification_config id=%s has empty group_id",
+            config.id,
+        )
         return
 
-    text = _build_order_created_message(db, order)
+    # Channel access token: env is primary; DB line_token is fallback (same as /line-config UI).
+    line_token = _channel_access_token_from_env() or (config.line_token or "").strip()
+    if not line_token:
+        logger.warning(
+            "LINE order-created notify: missing token. Set env LINE_CHANNEL_ACCESS_TOKEN "
+            "or line_token on an active line_notification_config row."
+        )
+        return
+
+    try:
+        text = _build_order_created_message(db, order)
+    except Exception:
+        logger.exception("LINE order-created notify: failed to build message for order id=%s", order_id)
+        return
+
     if not text:
+        logger.warning("LINE order-created notify: empty message for order id=%s", order_id)
         return
 
     body = {
-        "to": config.group_id,
+        "to": config.group_id.strip(),
         "messages": [
           {"type": "text", "text": text}
         ],
     }
-    data = json.dumps(body).encode("utf-8")
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     req = request.Request(
         "https://api.line.me/v2/bot/message/push",
         data=data,
         method="POST",
     )
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}")
+    req.add_header("Content-Type", "application/json; charset=UTF-8")
+    req.add_header("Authorization", f"Bearer {line_token}")
 
     try:
-        with request.urlopen(req, timeout=5) as resp:
-            # We don't care about body; just ensure request is sent.
+        with request.urlopen(req, timeout=15) as resp:
             resp.read()
-    except error.URLError:
-        # Fail silently; do not break order creation.
-        return
+    except error.HTTPError as e:
+        try:
+            err_body = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            err_body = str(e)
+        logger.warning(
+            "LINE order-created notify: HTTP %s from LINE API: %s",
+            getattr(e, "code", "?"),
+            err_body[:500],
+        )
+    except error.URLError as e:
+        logger.warning("LINE order-created notify: network error: %s", e)
 
