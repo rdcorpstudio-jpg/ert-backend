@@ -132,12 +132,28 @@ def create_order(
             db.flush()
 
             # 2️⃣ สร้าง Payment
+            pm = (data.payment_method or "").strip().lower()
+            deposit_val = None
+            if pm == "deposit_cod":
+                if data.deposit_amount is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="deposit_amount is required when payment_method is deposit_cod",
+                    )
+                d = float(data.deposit_amount)
+                if d <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="deposit_amount must be greater than 0",
+                    )
+                deposit_val = d
             payment = OrderPayment(
                 order_id=order.id,
                 payment_status="Unchecked",
                 payment_method=data.payment_method,
+                deposit_amount=deposit_val,
                 installment_type=data.installment_type,
-                installment_months=data.installment_months
+                installment_months=data.installment_months,
             )
 
             db.add(payment)
@@ -148,6 +164,10 @@ def create_order(
                 "order_id": order.id
             }
 
+        except HTTPException:
+            db.rollback()
+            db.expire_all()
+            raise
         except Exception as e:
             db.rollback()
             db.expire_all()
@@ -561,6 +581,7 @@ def update_payment_method(
     payment_method: str,
     installment_type: str | None = None,
     installment_months: int | None = None,
+    deposit_amount: float | None = Query(None),
     user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -585,15 +606,36 @@ def update_payment_method(
     old_method = payment.payment_method
     old_installment_type = payment.installment_type
     old_installment_months = payment.installment_months
+    old_deposit = float(payment.deposit_amount) if payment.deposit_amount is not None else None
+
+    pm = (payment_method or "").strip().lower()
+    if pm == "deposit_cod":
+        new_dep = deposit_amount if deposit_amount is not None else old_deposit
+        if new_dep is None or new_dep <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="deposit_amount is required and must be positive when payment_method is deposit_cod",
+            )
+        net = _order_net_total(db, order_id)
+        if net > 0 and new_dep > net + 1e-6:
+            raise HTTPException(
+                status_code=400,
+                detail="deposit_amount cannot exceed order net total",
+            )
+        payment.deposit_amount = new_dep
+    else:
+        payment.deposit_amount = None
 
     payment.payment_method = payment_method
     payment.installment_type = new_installment_type
     payment.installment_months = new_installment_months
 
+    new_dep_saved = float(payment.deposit_amount) if payment.deposit_amount is not None else None
     changed = (
         old_method != payment_method
         or old_installment_type != new_installment_type
         or (old_installment_months != new_installment_months and (old_installment_months or new_installment_months))
+        or (old_deposit != new_dep_saved and (old_deposit is not None or new_dep_saved is not None))
     )
     if changed:
         create_order_alert(
@@ -654,7 +696,7 @@ def update_payment_status(
     # 2b. จำกัดสิทธิ์ของ pack: เปลี่ยนได้เฉพาะ COD: Unchecked → Checked
     if role == "pack":
         if not (
-            (payment.payment_method or "").strip().lower() == "cod"
+            (payment.payment_method or "").strip().lower() in ("cod", "deposit_cod")
             and (old_payment_status or "").strip() == "Unchecked"
             and (new_status or "").strip() == "Checked"
         ):
@@ -1412,7 +1454,7 @@ def get_revenue_by_shipping_payment_buckets(
         elif s == "Packing":
             packing += net
         elif s in ("Shipped", "Success"):
-            if pm == "cod":
+            if pm in ("cod", "deposit_cod"):
                 if ps == "Checked":
                     ss_cod_checked += net
                 elif ps in ("Paid", "Received"):
@@ -1591,7 +1633,7 @@ def list_orders(
     only_my: bool | None = None,
     shipping_date: str | None = None,  # YYYY-MM-DD
     missing_shipping_date: bool | None = None,  # True: only orders with no shipping date set
-    payment_method: list[str] | None = Query(None),  # multi: cod, transfer, card_2c2p, card_pay
+    payment_method: list[str] | None = Query(None),  # multi: cod, deposit_cod, transfer, card_2c2p, card_pay
     product_category: list[str] | None = Query(None),  # multi: order has item in any of these categories
     invoice_required: bool | None = None,  # True: only orders that require invoice
     has_invoice_file: bool | None = None,  # True: has invoice/invoice_submit file; False: no such file
@@ -1919,6 +1961,10 @@ def get_order_detail(
             paid_date_str = getattr(_pd, "isoformat", lambda: str(_pd))()
             if paid_date_str and len(paid_date_str) > 10:
                 paid_date_str = paid_date_str[:10]  # date only for frontend
+        dep_amt = float(payment.deposit_amount) if getattr(payment, "deposit_amount", None) is not None else None
+        cod_expected = None
+        if (payment.payment_method or "").strip().lower() == "deposit_cod" and dep_amt is not None:
+            cod_expected = round(float(net_total) - dep_amt, 2)
         payment_data = {
             "payment_method": payment.payment_method,
             "payment_status": payment.payment_status,
@@ -1926,6 +1972,8 @@ def get_order_detail(
             "paid_note": payment.paid_note,
             "installment_type": payment.installment_type,
             "installment_months": payment.installment_months,
+            "deposit_amount": dep_amt,
+            "cod_expected_amount": cod_expected,
         }
 
     # Order-level freebies (from POST /orders/{id}/freebies during create)
@@ -2405,7 +2453,7 @@ def export_orders_excel(
     created_from: str | None = Query(None, description="YYYY-MM-DD"),
     created_to: str | None = Query(None, description="YYYY-MM-DD"),
     sale_id: int | None = Query(None, description="Filter by sale_id (optional)"),
-    payment_method: str | None = Query(None, description="cod | transfer | card_2c2p | card_pay"),
+    payment_method: str | None = Query(None, description="cod | deposit_cod | transfer | card_2c2p | card_pay"),
     payment_status: str | None = Query(None, description="Payment status filter (optional)"),
     order_status: str | None = Query(None, description="Order status filter (optional)"),
     user=Depends(get_current_user),

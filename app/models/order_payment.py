@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, Date
+from sqlalchemy import Column, Integer, String, DateTime, Text, Date, Numeric
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -9,6 +9,7 @@ class OrderPayment(Base):
     order_id = Column(Integer, unique=True)
 
     payment_method = Column(String(50))  
+    deposit_amount = Column(Numeric(12, 2), nullable=True)
     payment_status = Column(String(20), default="Unchecked")
 
     checked_by = Column(Integer, nullable=True)

@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from datetime import date
 from typing import Optional
+from decimal import Decimal
 
 class OrderCreate(BaseModel):
     customer_name: str
@@ -8,6 +9,7 @@ class OrderCreate(BaseModel):
     shipping_address: str
     shipping_date: Optional[date] = None
     payment_method: Optional[str] = None
+    deposit_amount: Optional[Decimal] = None  # required when payment_method is deposit_cod
     shipping_method: Optional[str] = None  # Normal (default) | Special
     invoice_text: Optional[str] = None
     note: Optional[str] = None
