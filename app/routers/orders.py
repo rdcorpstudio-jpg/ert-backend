@@ -1630,6 +1630,8 @@ def list_orders(
     only_my: bool | None = None,
     shipping_date: str | None = None,  # YYYY-MM-DD
     missing_shipping_date: bool | None = None,  # True: only orders with no shipping date set
+    created_from: str | None = Query(None, description="YYYY-MM-DD inclusive filter on order created_at"),
+    created_to: str | None = Query(None, description="YYYY-MM-DD inclusive filter on order created_at"),
     payment_method: list[str] | None = Query(None),  # multi: cod, deposit_cod, transfer, card_2c2p, card_pay
     product_category: list[str] | None = Query(None),  # multi: order has item in any of these categories
     invoice_required: bool | None = None,  # True: only orders that require invoice
@@ -1662,6 +1664,20 @@ def list_orders(
         try:
             sd = datetime.strptime(shipping_date, "%Y-%m-%d").date()
             query = query.filter(Order.shipping_date == sd)
+        except ValueError:
+            pass
+
+    # 2c. Filter: Order created_at date range (list / export parity with other endpoints)
+    if created_from:
+        try:
+            df = datetime.strptime(created_from, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) >= df)
+        except ValueError:
+            pass
+    if created_to:
+        try:
+            dt_to = datetime.strptime(created_to, "%Y-%m-%d").date()
+            query = query.filter(func.date(Order.created_at) <= dt_to)
         except ValueError:
             pass
 
