@@ -2114,6 +2114,11 @@ def add_order_item(
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    if (order.order_status or "").strip() != "Pending":
+        raise HTTPException(
+            status_code=403,
+            detail="Adding main product is allowed only when order status is Pending.",
+        )
 
     current_net = _order_net_total(db, order.id)
     net_at_check = float(order.net_total_at_check) if getattr(order, "net_total_at_check", None) is not None else None
