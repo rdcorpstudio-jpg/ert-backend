@@ -9,7 +9,7 @@ class OrderCreate(BaseModel):
     shipping_address: str
     shipping_date: Optional[date] = None
     payment_method: Optional[str] = None
-    deposit_amount: Optional[Decimal] = None  # required when payment_method is deposit_cod
+    deposit_amount: Optional[Decimal] = None  # required when payment_method starts with deposit_
     shipping_method: Optional[str] = None  # Normal (default) | Special
     invoice_text: Optional[str] = None
     note: Optional[str] = None

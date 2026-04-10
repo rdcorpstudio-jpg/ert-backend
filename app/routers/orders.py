@@ -44,6 +44,7 @@ from app.services.line_messaging import send_order_created_notification
 from googleapiclient.errors import HttpError
 
 router = APIRouter(prefix="/orders")
+DEPOSIT_PAYMENT_METHODS = {"deposit_cod", "deposit_card_2c2p", "deposit_card_pay"}
 
 def get_db():
     db = SessionLocal()
@@ -134,11 +135,11 @@ def create_order(
             # 2️⃣ สร้าง Payment
             pm = (data.payment_method or "").strip().lower()
             deposit_val = None
-            if pm == "deposit_cod":
+            if pm in DEPOSIT_PAYMENT_METHODS:
                 if data.deposit_amount is None:
                     raise HTTPException(
                         status_code=400,
-                        detail="deposit_amount is required when payment_method is deposit_cod",
+                        detail="deposit_amount is required when payment_method is deposit_*",
                     )
                 d = float(data.deposit_amount)
                 if d <= 0:
@@ -606,12 +607,12 @@ def update_payment_method(
     old_deposit = float(payment.deposit_amount) if payment.deposit_amount is not None else None
 
     pm = (payment_method or "").strip().lower()
-    if pm == "deposit_cod":
+    if pm in DEPOSIT_PAYMENT_METHODS:
         new_dep = deposit_amount if deposit_amount is not None else old_deposit
         if new_dep is None or new_dep <= 0:
             raise HTTPException(
                 status_code=400,
-                detail="deposit_amount is required and must be positive when payment_method is deposit_cod",
+                detail="deposit_amount is required and must be positive when payment_method is deposit_*",
             )
         net = _order_net_total(db, order_id)
         if net > 0 and new_dep > net + 1e-6:
@@ -1632,7 +1633,7 @@ def list_orders(
     missing_shipping_date: bool | None = None,  # True: only orders with no shipping date set
     created_from: str | None = Query(None, description="YYYY-MM-DD inclusive filter on order created_at"),
     created_to: str | None = Query(None, description="YYYY-MM-DD inclusive filter on order created_at"),
-    payment_method: list[str] | None = Query(None),  # multi: cod, deposit_cod, transfer, card_2c2p, card_pay
+    payment_method: list[str] | None = Query(None),  # multi: cod, deposit_cod, deposit_card_2c2p, deposit_card_pay, transfer, card_2c2p, card_pay
     product_category: list[str] | None = Query(None),  # multi: order has item in any of these categories
     invoice_required: bool | None = None,  # True: only orders that require invoice
     has_invoice_file: bool | None = None,  # True: has invoice/invoice_submit file; False: no such file
@@ -1976,7 +1977,7 @@ def get_order_detail(
                 paid_date_str = paid_date_str[:10]  # date only for frontend
         dep_amt = float(payment.deposit_amount) if getattr(payment, "deposit_amount", None) is not None else None
         cod_expected = None
-        if (payment.payment_method or "").strip().lower() == "deposit_cod" and dep_amt is not None:
+        if (payment.payment_method or "").strip().lower() in DEPOSIT_PAYMENT_METHODS and dep_amt is not None:
             cod_expected = round(float(net_total) - dep_amt, 2)
         payment_data = {
             "payment_method": payment.payment_method,
@@ -2466,7 +2467,7 @@ def export_orders_excel(
     created_from: str | None = Query(None, description="YYYY-MM-DD"),
     created_to: str | None = Query(None, description="YYYY-MM-DD"),
     sale_id: int | None = Query(None, description="Filter by sale_id (optional)"),
-    payment_method: str | None = Query(None, description="cod | deposit_cod | transfer | card_2c2p | card_pay"),
+    payment_method: str | None = Query(None, description="cod | deposit_cod | deposit_card_2c2p | deposit_card_pay | transfer | card_2c2p | card_pay"),
     payment_status: str | None = Query(None, description="Payment status filter (optional)"),
     order_status: str | None = Query(None, description="Order status filter (optional)"),
     user=Depends(get_current_user),
