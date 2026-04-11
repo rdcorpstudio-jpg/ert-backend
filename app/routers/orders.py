@@ -2475,6 +2475,8 @@ def export_orders_excel(
     payment_method: str | None = Query(None, description="cod | deposit_cod | deposit_card_2c2p | deposit_card_pay | transfer | card_2c2p | card_pay"),
     payment_status: str | None = Query(None, description="Payment status filter (optional)"),
     order_status: str | None = Query(None, description="Order status filter (optional)"),
+    order_status_in: list[str] | None = Query(None, description="Multiple order statuses (e.g. Shipped + Success)"),
+    product_category: list[str] | None = Query(None, description="Order has an item in any of these product categories"),
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -2517,8 +2519,20 @@ def export_orders_excel(
     if payment_status:
         query = query.filter(OrderPayment.payment_status == payment_status)
 
-    if order_status:
+    if order_status_in and len(order_status_in) > 0:
+        query = query.filter(Order.order_status.in_(order_status_in))
+    elif order_status:
         query = query.filter(Order.order_status == order_status)
+
+    if product_category and len(product_category) > 0:
+        order_ids_subq = (
+            db.query(OrderItem.order_id)
+            .join(Product, Product.id == OrderItem.product_id)
+            .filter(Product.category.in_(product_category))
+            .distinct()
+            .subquery()
+        )
+        query = query.filter(Order.id.in_(order_ids_subq))
 
     rows = query.order_by(Order.created_at.asc()).all()
 
