@@ -76,7 +76,7 @@ def delete_product_freebie(
 
 @router.get("/freebies")
 def list_freebies(db: Session = Depends(get_db)):
-    return db.query(Freebie).all()
+    return db.query(Freebie).order_by(Freebie.id.asc()).all()
 
 @router.post("/freebies")
 def create_freebie(name: str, db: Session = Depends(get_db)):
