@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, Boolean, Text, Numeric
+from sqlalchemy import Column, Integer, String, Date, Boolean, Text, Numeric, Index
 from app.database import Base
 from sqlalchemy.orm import relationship
 from sqlalchemy import DateTime
@@ -7,11 +7,16 @@ from sqlalchemy.sql import func
 
 class Order(Base):
     __tablename__ = "orders"
-    
+    # Speed up list_orders (default sort) and sale "only my orders" + sort.
+    __table_args__ = (
+        Index("ix_orders_created_at", "created_at"),
+        Index("ix_orders_sale_id_created", "sale_id", "created_at"),
+    )
+
     created_at = Column(
         DateTime,
         server_default=func.now(),
-        nullable=False
+        nullable=False,
     )
 
 
