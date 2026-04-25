@@ -69,13 +69,9 @@ def delete_product_freebie(
 
 @router.get("/freebies")
 def list_freebies(
-    include_inactive: bool = False,
     db: Session = Depends(get_db),
 ):
-    query = db.query(Freebie)
-    if not include_inactive:
-        query = query.filter(Freebie.is_active == True)
-    return query.order_by(Freebie.id.asc()).all()
+    return db.query(Freebie).order_by(Freebie.id.asc()).all()
 
 @router.post("/freebies")
 def create_freebie(
@@ -94,7 +90,6 @@ def create_freebie(
 @router.put("/freebies/{freebie_id}/active")
 def set_freebie_active(
     freebie_id: int,
-    is_active: bool,
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -102,7 +97,4 @@ def set_freebie_active(
     freebie = db.query(Freebie).filter(Freebie.id == freebie_id).first()
     if not freebie:
         raise HTTPException(status_code=404, detail="Freebie not found")
-    freebie.is_active = is_active
-    db.commit()
-    db.refresh(freebie)
-    return freebie
+    return {"message": "Freebie active toggle is disabled", "id": freebie.id, "name": freebie.name}

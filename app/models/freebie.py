@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String
+from sqlalchemy import Column, Integer, String
 from app.database import Base
 
 class Freebie(Base):
@@ -6,4 +6,3 @@ class Freebie(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String(100), unique=True)
-    is_active = Column(Boolean, default=True, nullable=False)
