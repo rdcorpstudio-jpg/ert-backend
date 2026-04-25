@@ -28,7 +28,10 @@ app = FastAPI(title="ERT Backend")
 
 # CORS: allow frontend origin. In production set CORS_ORIGINS (e.g. https://your-app.vercel.app).
 import os
-_cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+_cors_origins = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173",
+).split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in _cors_origins if o.strip()],
