@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
@@ -7,6 +9,14 @@ from app.core.permissions import require_role
 from app.models.freebie import Freebie
 from app.models.freebie_visibility import FreebieVisibility
 
+
+def _load_freebie_visibility_map(db: Session) -> Optional[dict[int, bool]]:
+    """If the visibility table is missing (first deploy / migration not run), return None = treat all as shown."""
+    try:
+        rows = db.query(FreebieVisibility).all()
+        return {row.freebie_id: bool(row.is_active) for row in rows}
+    except Exception:
+        return None
 
 
 router = APIRouter(prefix="/products")
@@ -74,13 +84,15 @@ def list_freebies(
     db: Session = Depends(get_db),
 ):
     freebies = db.query(Freebie).order_by(Freebie.id.asc()).all()
-    visibility_rows = db.query(FreebieVisibility).all()
-    is_active_by_id = {row.freebie_id: bool(row.is_active) for row in visibility_rows}
+    is_active_by_id = _load_freebie_visibility_map(db)
 
     result = []
     for freebie in freebies:
         # Default visibility is shown when not explicitly configured.
-        is_active = is_active_by_id.get(freebie.id, True)
+        if is_active_by_id is None:
+            is_active = True
+        else:
+            is_active = is_active_by_id.get(freebie.id, True)
         if not include_inactive and not is_active:
             continue
         result.append(
@@ -119,12 +131,18 @@ def set_freebie_active(
     if not freebie:
         raise HTTPException(status_code=404, detail="Freebie not found")
 
-    row = db.query(FreebieVisibility).filter(FreebieVisibility.freebie_id == freebie_id).first()
-    if row:
-        row.is_active = is_active
-    else:
-        row = FreebieVisibility(freebie_id=freebie_id, is_active=is_active)
-        db.add(row)
-
-    db.commit()
+    try:
+        row = db.query(FreebieVisibility).filter(FreebieVisibility.freebie_id == freebie_id).first()
+        if row:
+            row.is_active = is_active
+        else:
+            row = FreebieVisibility(freebie_id=freebie_id, is_active=is_active)
+            db.add(row)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail="Cannot update freebie visibility (database table not ready). Redeploy the backend or run migrations.",
+        ) from e
     return {"id": freebie.id, "name": freebie.name, "is_active": bool(is_active)}
