@@ -44,7 +44,7 @@ from app.services.line_messaging import send_order_created_notification
 from googleapiclient.errors import HttpError
 
 router = APIRouter(prefix="/orders")
-DEPOSIT_PAYMENT_METHODS = {"deposit_cod", "deposit_card_2c2p", "deposit_card_pay"}
+DEPOSIT_PAYMENT_METHODS = {"deposit_cod", "deposit_transfer", "deposit_card_2c2p", "deposit_card_pay"}
 
 def get_db():
     db = SessionLocal()
@@ -1633,7 +1633,7 @@ def list_orders(
     missing_shipping_date: bool | None = None,  # True: only orders with no shipping date set
     created_from: str | None = Query(None, description="YYYY-MM-DD inclusive filter on order created_at"),
     created_to: str | None = Query(None, description="YYYY-MM-DD inclusive filter on order created_at"),
-    payment_method: list[str] | None = Query(None),  # multi: cod, deposit_cod, deposit_card_2c2p, deposit_card_pay, transfer, card_2c2p, card_pay
+    payment_method: list[str] | None = Query(None),  # multi: cod, deposit_cod, deposit_transfer, deposit_card_2c2p, deposit_card_pay, transfer, card_2c2p, card_pay
     product_category: list[str] | None = Query(None),  # multi: order has item in any of these categories
     invoice_required: bool | None = None,  # True: only orders that require invoice
     has_invoice_file: bool | None = None,  # True: has invoice/invoice_submit file; False: no such file
@@ -2472,7 +2472,7 @@ def export_orders_excel(
     created_from: str | None = Query(None, description="YYYY-MM-DD"),
     created_to: str | None = Query(None, description="YYYY-MM-DD"),
     sale_id: int | None = Query(None, description="Filter by sale_id (optional)"),
-    payment_method: str | None = Query(None, description="cod | deposit_cod | deposit_card_2c2p | deposit_card_pay | transfer | card_2c2p | card_pay"),
+    payment_method: str | None = Query(None, description="cod | deposit_cod | deposit_transfer | deposit_card_2c2p | deposit_card_pay | transfer | card_2c2p | card_pay"),
     payment_status: str | None = Query(None, description="Payment status filter (optional)"),
     order_status: str | None = Query(None, description="Order status filter (optional)"),
     order_status_in: list[str] | None = Query(None, description="Multiple order statuses (e.g. Shipped + Success)"),

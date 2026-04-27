@@ -40,6 +40,7 @@ def _build_order_created_message(db: Session, order: Order) -> Optional[str]:
     payment_method_map = {
         "cod": "เก็บเงินปลายทาง",
         "deposit_cod": "มัดจำ + เก็บเงินปลายทาง",
+        "deposit_transfer": "มัดจำ + โอน",
         "deposit_card_2c2p": "มัดจำ + บัตรเครดิต (2C2P)",
         "deposit_card_pay": "มัดจำ + บัตรเครดิต (Pay)",
         "transfer": "โอน",
@@ -96,10 +97,15 @@ def _build_order_created_message(db: Session, order: Order) -> Optional[str]:
     net_total = _order_net_total(db, order.id)
     net_text = f"{net_total:,.2f} บาท"
 
-    if payment_method_raw in {"deposit_cod", "deposit_card_2c2p", "deposit_card_pay"} and payment and payment.deposit_amount is not None:
+    if payment_method_raw in {"deposit_cod", "deposit_transfer", "deposit_card_2c2p", "deposit_card_pay"} and payment and payment.deposit_amount is not None:
         dep = float(payment.deposit_amount)
         remain = max(0.0, float(net_total) - dep)
-        remain_label = "ปลายทาง" if payment_method_raw == "deposit_cod" else "บัตร"
+        if payment_method_raw == "deposit_cod":
+            remain_label = "ปลายทาง"
+        elif payment_method_raw == "deposit_transfer":
+            remain_label = "โอน"
+        else:
+            remain_label = "บัตร"
         payment_method_text = f"{payment_method_text} (มัดจำ {dep:,.2f} บาท / {remain_label} {remain:,.2f} บาท)"
 
     shipping_note = (order.shipping_note or "").strip() or "-"
