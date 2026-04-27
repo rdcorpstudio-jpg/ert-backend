@@ -6,6 +6,8 @@ from app.database import Base, engine
 # Otherwise tables like order_freebies are never created.
 import app.models.user
 import app.models.product
+import app.models.product_category_order
+import app.models.product_display_order
 import app.models.freebie
 import app.models.freebie_visibility
 import app.models.order
