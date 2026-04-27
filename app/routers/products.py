@@ -52,11 +52,33 @@ def create_product(
 
 @router.get("")
 def list_products(
+    include_inactive: bool = False,
     user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    products = db.query(Product).filter(Product.is_active == True).all()
+    query = db.query(Product)
+    if not include_inactive:
+        query = query.filter(Product.is_active == True)
+    products = query.order_by(Product.id.asc()).all()
     return products
+
+
+@router.put("/{product_id}/active")
+def set_product_active(
+    product_id: int,
+    is_active: bool,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, ["manager"])
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    product.is_active = is_active
+    db.commit()
+    db.refresh(product)
+    return {"id": product.id, "name": product.name, "is_active": bool(product.is_active)}
 
 @router.delete("/freebies/{freebie_id}")
 def delete_product_freebie(
