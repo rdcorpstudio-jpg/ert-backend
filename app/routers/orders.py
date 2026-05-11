@@ -243,6 +243,31 @@ def upload_order_file(
             OrderFile.file_type == "payment_slip",
         ).delete(synchronize_session=False)
 
+    # 3b. Balance / second slip for deposit payment methods: only Shipped or Success; replaces prior balance slip only
+    if file_type == "payment_slip_balance":
+        order = db.query(Order).filter(Order.id == order_id).first()
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        payment = db.query(OrderPayment).filter(OrderPayment.order_id == order_id).first()
+        if not payment:
+            raise HTTPException(status_code=400, detail="Order has no payment record.")
+        pm = (payment.payment_method or "").strip().lower()
+        if pm not in DEPOSIT_PAYMENT_METHODS:
+            raise HTTPException(
+                status_code=400,
+                detail="Balance payment slip is only allowed for deposit payment methods.",
+            )
+        st = (order.order_status or "").strip()
+        if st not in ("Shipped", "Success"):
+            raise HTTPException(
+                status_code=400,
+                detail="Balance payment slip upload is only allowed when order status is Shipped or Success.",
+            )
+        db.query(OrderFile).filter(
+            OrderFile.order_id == order_id,
+            OrderFile.file_type == "payment_slip_balance",
+        ).delete(synchronize_session=False)
+
     # 4. อ่านไฟล์
     file_bytes = file.file.read()
 

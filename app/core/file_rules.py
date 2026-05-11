@@ -3,6 +3,11 @@ FILE_RULES = {
         "folder_id": "1UVk4ND0xOWlmxQ1DkpcSxsjd8dLp0kkl",
         "roles": ["sale", "manager"]
     },
+    # Second slip for deposit flows (balance / COD / card remainder) after order is shipped or completed.
+    "payment_slip_balance": {
+        "folder_id": "1UVk4ND0xOWlmxQ1DkpcSxsjd8dLp0kkl",
+        "roles": ["sale", "manager"]
+    },
     # Sale on CreateOrderPage: picture of address / request (lazy to type). Folder: sale request invoice.
     "invoice": {
         "folder_id": "1PLQxBdFAvSzQT16s75jEOUvhF1ox_J41",
