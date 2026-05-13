@@ -2562,8 +2562,8 @@ def export_orders_excel(
     rows = query.order_by(Order.created_at.asc()).all()
 
     export_order_ids = [o.id for o, _pay, _su in rows]
-    # First line item per order (same ordering as accountant list main_product_name)
-    first_item_category_name: dict[int, tuple[str, str]] = {}
+    # All line items per order (order_items.id order); expand columns to the right up to max lines in this export
+    items_by_order: dict[int, list[tuple[str, str]]] = defaultdict(list)
     if export_order_ids:
         for oid, pname, pcat in (
             db.query(OrderItem.order_id, OrderItem.product_name, Product.category)
@@ -2572,41 +2572,43 @@ def export_orders_excel(
             .order_by(OrderItem.order_id, OrderItem.id)
             .all()
         ):
-            if oid not in first_item_category_name:
-                first_item_category_name[oid] = ((pcat or "").strip(), (pname or "").strip())
+            items_by_order[oid].append(((pcat or "").strip(), (pname or "").strip()))
+
+    max_line_count = max(
+        (len(items_by_order[oid]) for oid in export_order_ids),
+        default=0,
+    )
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Orders"
 
-    # Columns (one row per order):
-    # - Order Created Date
-    # - Order ID (order_code)
-    # - Sale
-    # - Customer Name
-    # - Payment Method
-    # - Payment Status
-    # - Order Status
-    # - Net Price
-    # - Product Category / Product Name (from first order line item)
-    ws.append(
-        [
-            "Order Created Date",
-            "Order ID",
-            "Sale",
-            "Customer Name",
-            "Payment Method",
-            "Payment Status",
-            "Order Status",
-            "Net Price",
-            "Product Category",
-            "Product Name",
-        ]
-    )
+    # One row per order; product columns repeat (Category, Name) for line 1..N where N = max lines in export
+    base_headers = [
+        "Order Created Date",
+        "Order ID",
+        "Sale",
+        "Customer Name",
+        "Payment Method",
+        "Payment Status",
+        "Order Status",
+        "Net Price",
+    ]
+    product_headers: list[str] = []
+    for i in range(1, max_line_count + 1):
+        product_headers.append(f"Product {i} Category")
+        product_headers.append(f"Product {i} Name")
+    ws.append(base_headers + product_headers)
 
     for o, pay, sale_user in rows:
         net_total = _order_net_total(db, o.id)
-        main_cat, main_name = first_item_category_name.get(o.id, ("", ""))
+        pairs = items_by_order.get(o.id, [])
+        product_cells: list[str] = []
+        for idx in range(max_line_count):
+            if idx < len(pairs):
+                product_cells.extend([pairs[idx][0], pairs[idx][1]])
+            else:
+                product_cells.extend(["", ""])
         ws.append(
             [
                 o.created_at.date().isoformat()
@@ -2619,9 +2621,8 @@ def export_orders_excel(
                 pay.payment_status or "",
                 o.order_status or "",
                 net_total,
-                main_cat,
-                main_name,
             ]
+            + product_cells
         )
 
     stream = io.BytesIO()
