@@ -2561,6 +2561,20 @@ def export_orders_excel(
 
     rows = query.order_by(Order.created_at.asc()).all()
 
+    export_order_ids = [o.id for o, _pay, _su in rows]
+    # First line item per order (same ordering as accountant list main_product_name)
+    first_item_category_name: dict[int, tuple[str, str]] = {}
+    if export_order_ids:
+        for oid, pname, pcat in (
+            db.query(OrderItem.order_id, OrderItem.product_name, Product.category)
+            .outerjoin(Product, Product.id == OrderItem.product_id)
+            .filter(OrderItem.order_id.in_(export_order_ids))
+            .order_by(OrderItem.order_id, OrderItem.id)
+            .all()
+        ):
+            if oid not in first_item_category_name:
+                first_item_category_name[oid] = ((pcat or "").strip(), (pname or "").strip())
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Orders"
@@ -2574,6 +2588,7 @@ def export_orders_excel(
     # - Payment Status
     # - Order Status
     # - Net Price
+    # - Product Category / Product Name (from first order line item)
     ws.append(
         [
             "Order Created Date",
@@ -2584,11 +2599,14 @@ def export_orders_excel(
             "Payment Status",
             "Order Status",
             "Net Price",
+            "Product Category",
+            "Product Name",
         ]
     )
 
     for o, pay, sale_user in rows:
         net_total = _order_net_total(db, o.id)
+        main_cat, main_name = first_item_category_name.get(o.id, ("", ""))
         ws.append(
             [
                 o.created_at.date().isoformat()
@@ -2601,6 +2619,8 @@ def export_orders_excel(
                 pay.payment_status or "",
                 o.order_status or "",
                 net_total,
+                main_cat,
+                main_name,
             ]
         )
 
