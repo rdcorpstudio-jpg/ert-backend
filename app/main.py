@@ -10,6 +10,7 @@ import app.models.product_category_order
 import app.models.product_display_order
 import app.models.freebie
 import app.models.freebie_visibility
+import app.models.discount_rule
 import app.models.order
 import app.models.order_payment
 import app.models.order_item

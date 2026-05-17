@@ -10,6 +10,7 @@ from app.deps import get_current_user
 from app.core.permissions import require_role
 from app.models.freebie import Freebie
 from app.models.freebie_visibility import FreebieVisibility
+from app.models.discount_rule import DiscountRule
 
 
 def _load_freebie_visibility_map(db: Session) -> Optional[dict[int, bool]]:
@@ -259,3 +260,76 @@ def set_freebie_active(
             detail="Cannot update freebie visibility (database table not ready). Redeploy the backend or run migrations.",
         ) from e
     return {"id": freebie.id, "name": freebie.name, "is_active": bool(is_active)}
+
+
+def _discount_rule_payload(rule: DiscountRule) -> dict:
+    return {
+        "id": rule.id,
+        "value": float(rule.value),
+        "discount_type": rule.discount_type,
+        "is_active": bool(rule.is_active),
+        "sort_order": int(rule.sort_order or 0),
+    }
+
+
+@router.get("/discount-rules")
+def list_discount_rules(
+    include_inactive: bool = False,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, ["sale", "manager", "account", "pack"])
+    query = db.query(DiscountRule)
+    if not include_inactive:
+        query = query.filter(DiscountRule.is_active == True)
+    rules = query.order_by(DiscountRule.sort_order.asc(), DiscountRule.id.asc()).all()
+    return [_discount_rule_payload(r) for r in rules]
+
+
+@router.post("/discount-rules")
+def create_discount_rule(
+    value: float,
+    discount_type: str,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, ["manager"])
+    dtype = (discount_type or "").strip().lower()
+    if dtype not in ("percent", "baht"):
+        raise HTTPException(status_code=400, detail="discount_type must be 'percent' or 'baht'")
+    val = float(value)
+    if val <= 0:
+        raise HTTPException(status_code=400, detail="value must be greater than 0")
+    if dtype == "percent" and val > 100:
+        raise HTTPException(status_code=400, detail="percent value cannot exceed 100")
+
+    max_sort = db.query(DiscountRule.sort_order).order_by(DiscountRule.sort_order.desc()).first()
+    next_sort = int(max_sort[0]) + 1 if max_sort and max_sort[0] is not None else 0
+
+    rule = DiscountRule(
+        value=val,
+        discount_type=dtype,
+        is_active=True,
+        sort_order=next_sort,
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return _discount_rule_payload(rule)
+
+
+@router.put("/discount-rules/{rule_id}/active")
+def set_discount_rule_active(
+    rule_id: int,
+    is_active: bool,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, ["manager"])
+    rule = db.query(DiscountRule).filter(DiscountRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Discount rule not found")
+    rule.is_active = is_active
+    db.commit()
+    db.refresh(rule)
+    return _discount_rule_payload(rule)
