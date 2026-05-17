@@ -1660,6 +1660,7 @@ def list_orders(
     created_to: str | None = Query(None, description="YYYY-MM-DD inclusive filter on order created_at"),
     payment_method: list[str] | None = Query(None),  # multi: cod, deposit_cod, deposit_transfer, deposit_card_2c2p, deposit_card_pay, transfer, card_2c2p, card_pay
     product_category: list[str] | None = Query(None),  # multi: order has item in any of these categories
+    product_name: list[str] | None = Query(None),  # multi: order has item with any of these product names
     invoice_required: bool | None = None,  # True: only orders that require invoice
     has_invoice_file: bool | None = None,  # True: has invoice/invoice_submit file; False: no such file
     has_tracking_number: bool | None = None,  # False: only orders without tracking number (for Tracking Number page)
@@ -1727,6 +1728,16 @@ def list_orders(
             db.query(OrderItem.order_id)
             .join(Product, Product.id == OrderItem.product_id)
             .filter(Product.category.in_(product_category))
+            .distinct()
+            .subquery()
+        )
+        query = query.filter(Order.id.in_(order_ids_subq))
+
+    # 3d. Filter: Product name (multi: order has at least one line item with any of these names)
+    if product_name and len(product_name) > 0:
+        order_ids_subq = (
+            db.query(OrderItem.order_id)
+            .filter(OrderItem.product_name.in_(product_name))
             .distinct()
             .subquery()
         )
