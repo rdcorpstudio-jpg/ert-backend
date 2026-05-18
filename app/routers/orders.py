@@ -74,6 +74,36 @@ def _export_deposit_and_balance(
     return dep, balance
 
 
+def _export_summary_transfer_and_cod(
+    payment_method: str | None,
+    deposit_amount,
+    net_total: float,
+) -> tuple[float, float]:
+    """
+    Per-order amounts for export footer:
+    - Transfer: full transfer + all deposit 1st chunks + deposit_transfer balance
+    - COD: full cod + deposit_cod balance
+    """
+    pm = (payment_method or "").strip().lower()
+    transfer_total = 0.0
+    cod_total = 0.0
+
+    if pm == "transfer":
+        transfer_total += float(net_total)
+    elif pm == "cod":
+        cod_total += float(net_total)
+    elif pm in DEPOSIT_PAYMENT_METHODS:
+        dep, balance = _export_deposit_and_balance(payment_method, deposit_amount, net_total)
+        if dep is not None:
+            transfer_total += dep
+        if pm == "deposit_transfer" and balance is not None:
+            transfer_total += balance
+        elif pm == "deposit_cod" and balance is not None:
+            cod_total += balance
+
+    return transfer_total, cod_total
+
+
 def _revenue_orders_query(
     db: Session,
     created_from: str | None,
@@ -2627,6 +2657,9 @@ def export_orders_excel(
         product_headers.append(f"Product {i} Name")
     ws.append(base_headers + product_headers)
 
+    summary_transfer = 0.0
+    summary_cod = 0.0
+
     for o, pay, sale_user in rows:
         net_total = _order_net_total(db, o.id)
         deposit_paid, balance_paid = _export_deposit_and_balance(
@@ -2634,6 +2667,14 @@ def export_orders_excel(
             pay.deposit_amount,
             net_total,
         )
+        add_transfer, add_cod = _export_summary_transfer_and_cod(
+            pay.payment_method,
+            pay.deposit_amount,
+            net_total,
+        )
+        summary_transfer += add_transfer
+        summary_cod += add_cod
+
         pairs = items_by_order.get(o.id, [])
         product_cells: list[str] = []
         for idx in range(max_line_count):
@@ -2658,6 +2699,10 @@ def export_orders_excel(
             ]
             + product_cells
         )
+
+    ws.append([])
+    ws.append(["สรุปยอดโอน", round(summary_transfer, 2)])
+    ws.append(["สรุปยอดปลายทาง", round(summary_cod, 2)])
 
     stream = io.BytesIO()
     wb.save(stream)
