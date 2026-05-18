@@ -60,6 +60,20 @@ def _order_net_total(db: Session, order_id: int) -> float:
     return sum(float(i.unit_price) - float(i.discount) for i in items)
 
 
+def _export_deposit_and_balance(
+    payment_method: str | None,
+    deposit_amount,
+    net_total: float,
+) -> tuple[float | None, float | None]:
+    """Deposit + remainder for deposit_* methods; empty for full-payment methods."""
+    pm = (payment_method or "").strip().lower()
+    if pm not in DEPOSIT_PAYMENT_METHODS or deposit_amount is None:
+        return None, None
+    dep = round(float(deposit_amount), 2)
+    balance = round(max(0.0, float(net_total) - dep), 2)
+    return dep, balance
+
+
 def _revenue_orders_query(
     db: Session,
     created_from: str | None,
@@ -2604,6 +2618,8 @@ def export_orders_excel(
         "Payment Status",
         "Order Status",
         "Net Price",
+        "จ่ายมัดจำ",
+        "จ่ายปิดยอด",
     ]
     product_headers: list[str] = []
     for i in range(1, max_line_count + 1):
@@ -2613,6 +2629,11 @@ def export_orders_excel(
 
     for o, pay, sale_user in rows:
         net_total = _order_net_total(db, o.id)
+        deposit_paid, balance_paid = _export_deposit_and_balance(
+            pay.payment_method,
+            pay.deposit_amount,
+            net_total,
+        )
         pairs = items_by_order.get(o.id, [])
         product_cells: list[str] = []
         for idx in range(max_line_count):
@@ -2632,6 +2653,8 @@ def export_orders_excel(
                 pay.payment_status or "",
                 o.order_status or "",
                 net_total,
+                deposit_paid if deposit_paid is not None else "",
+                balance_paid if balance_paid is not None else "",
             ]
             + product_cells
         )
