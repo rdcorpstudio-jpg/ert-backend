@@ -2618,16 +2618,25 @@ def export_orders_excel(
 
     export_order_ids = [o.id for o, _pay, _su in rows]
     # All line items per order (order_items.id order); expand columns to the right up to max lines in this export
-    items_by_order: dict[int, list[tuple[str, str]]] = defaultdict(list)
+    items_by_order: dict[int, list[tuple[str, str, float]]] = defaultdict(list)
     if export_order_ids:
-        for oid, pname, pcat in (
-            db.query(OrderItem.order_id, OrderItem.product_name, Product.category)
+        for oid, pname, pcat, unit_price, discount in (
+            db.query(
+                OrderItem.order_id,
+                OrderItem.product_name,
+                Product.category,
+                OrderItem.unit_price,
+                OrderItem.discount,
+            )
             .outerjoin(Product, Product.id == OrderItem.product_id)
             .filter(OrderItem.order_id.in_(export_order_ids))
             .order_by(OrderItem.order_id, OrderItem.id)
             .all()
         ):
-            items_by_order[oid].append(((pcat or "").strip(), (pname or "").strip()))
+            line_net = round(float(unit_price) - float(discount or 0), 2)
+            items_by_order[oid].append(
+                ((pcat or "").strip(), (pname or "").strip(), line_net)
+            )
 
     max_line_count = max(
         (len(items_by_order[oid]) for oid in export_order_ids),
@@ -2638,7 +2647,7 @@ def export_orders_excel(
     ws = wb.active
     ws.title = "Orders"
 
-    # One row per order; product columns repeat (Category, Name) for line 1..N where N = max lines in export
+    # One row per order; product columns repeat (Category, Name, Price) for line 1..N where N = max lines in export
     base_headers = [
         "Order Created Date",
         "Order ID",
@@ -2655,6 +2664,7 @@ def export_orders_excel(
     for i in range(1, max_line_count + 1):
         product_headers.append(f"Product {i} Category")
         product_headers.append(f"Product {i} Name")
+        product_headers.append(f"Product {i} Price")
     ws.append(base_headers + product_headers)
 
     summary_transfer = 0.0
@@ -2679,9 +2689,9 @@ def export_orders_excel(
         product_cells: list[str] = []
         for idx in range(max_line_count):
             if idx < len(pairs):
-                product_cells.extend([pairs[idx][0], pairs[idx][1]])
+                product_cells.extend([pairs[idx][0], pairs[idx][1], pairs[idx][2]])
             else:
-                product_cells.extend(["", ""])
+                product_cells.extend(["", "", ""])
         ws.append(
             [
                 o.created_at.date().isoformat()
